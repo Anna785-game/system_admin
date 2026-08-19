@@ -1,0 +1,61 @@
+:root {
+  /* ---- Palette : tirée de la roue en laiton (rouge / bleu / jaune) posée
+     sur un fond de salle de contrôle quasi-noir, façon régie broadcast. ---- */
+  --bg: #0a0c11;
+  --bg-alt: #0d1017;
+  --panel: #12151ded;
+  --panel-solid: #12151d;
+  --panel-raised: #181c27;
+  --panel-inset: #0c0e14;
+  --border: #262b3a;
+  --border-soft: #1c202c;
+  --border-solid: #2e3444;
+
+  --gold: #c9a13b;
+  --gold-bright: #e8c565;
+  --gold-dim: rgba(201, 161, 59, 0.16);
+
+  --red: #d1382b;
+  --red-bright: #ef5240;
+  --red-dim: rgba(209, 56, 43, 0.16);
+
+  --blue: #2b64d6;
+  --blue-bright: #5b8bf0;
+  --blue-dim: rgba(43, 100, 214, 0.16);
+
+  --yellow: #e7ac0e;
+  --yellow-bright: #ffcb3d;
+  --yellow-dim: rgba(231, 172, 14, 0.16);
+
+  --green: #3fae6a;
+  --green-bright: #57d489;
+  --green-dim: rgba(63, 174, 106, 0.16);
+
+  --text: #eae7dc;
+  --text-dim: #97a0b3;
+  --text-mute: #5a6275;
+
+  --font-display: "Oswald", "Arial Narrow", sans-serif;
+  --font-body: "Inter", -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 18px;
+
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 12px 28px -14px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 20px 60px -20px rgba(0, 0, 0, 0.75);
+
+  --topbar-h: 64px;
+  --sidebar-w: 216px;
+  --ticker-h: 46px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
