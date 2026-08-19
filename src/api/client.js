@@ -104,6 +104,14 @@ export const api = {
 
   // ---- biométrie ---------------------------------------------------
   supprimerVisage: (employeId) => request(`/api/biometrie/${employeId}`, { method: "DELETE" }),
+  
+    // ---- présence live -------------------------------------------------
+  listePresentsLive: () => request("/presences/live"),
+  forceSortie: (employeId) =>
+    request(`/presences/force-sortie/${employeId}`, { method: "POST" }),
+
+  // ---- parcours employé ----------------------------------------------
+  parcoursEmploye: (id) => request(`/employes/${id}/parcours`),
 };
 
 export { ApiError };

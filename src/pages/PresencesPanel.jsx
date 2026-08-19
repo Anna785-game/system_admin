@@ -1,4 +1,15 @@
-import { useState } from "react";
+/**
+ * Présence live — remplace l'ancien panneau Présences/Absences redondant.
+ *
+ * Affiche :
+ *  - Qui est actuellement dans l'entreprise (carte.isentree = true)
+ *  - Heure d'entrée + temps passé
+ *  - Bouton "Forcer sortie" (admin)
+ *  - Compteur
+ *  - Journal du jour (entrées/sorties via WebSocket déjà dans le feed)
+ */
+
+import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useResource } from "../hooks/useResource";
 import { useToast } from "../context/ToastContext";
@@ -8,33 +19,58 @@ function formatDuree(min) {
   if (min === null || min === undefined) return "—";
   const h = Math.floor(min / 60);
   const m = min % 60;
+  if (h === 0) return `${m} min`;
   return `${h}h${String(m).padStart(2, "0")}`;
 }
 
-export default function PresencesPanel() {
-  const [jour, setJour] = useState("");
-  const toast = useToast();
-  const [busy, setBusy] = useState(null);
+function formatHeure(h) {
+  if (!h) return "—";
+  // accepte "HH:MM:SS" ou déjà formaté
+  return h.length >= 5 ? h.slice(0, 5) : h;
+}
 
-  const { data: presences, loading: loadingP, error: errorP, reload: reloadP } = useResource(
-    () => api.listePresences(jour ? { jour } : {}),
-    { refreshOn: ["entree_entreprise", "sortie_entreprise", "simulation_day"], deps: [jour] },
-  );
-  const { data: absences, loading: loadingA, reload: reloadA } = useResource(api.listeAbsences, {
-    refreshOn: ["simulation_day", "simulation_end"],
+async function fetchMeta() {
+  const [presents, postes] = await Promise.all([
+    api.listePresentsLive(),
+    api.listePostes(),
+  ]);
+  return { presents, postes };
+}
+
+export default function PresencesPanel() {
+  const toast = useToast();
+  const [busyId, setBusyId] = useState(null);
+
+  const { data, loading, error, reload } = useResource(fetchMeta, {
+    refreshOn: [
+      "entree_entreprise",
+      "sortie_entreprise",
+      "vire_manuel",
+      "simulation_end",
+    ],
   });
 
-  async function runJob(fn, label) {
-    setBusy(label);
+  const presents = data?.presents || [];
+  const posteMap = useMemo(
+    () => Object.fromEntries((data?.postes || []).map((p) => [p.id, p.type_poste])),
+    [data]
+  );
+
+  async function forcerSortie(p) {
+    const nom = `${p.nom || ""} ${p.prenom || ""}`.trim() || `#${p.employe_id}`;
+    if (!window.confirm(`Forcer la sortie de ${nom} ?`)) return;
+    setBusyId(p.employe_id);
     try {
-      const res = await fn();
-      toast.success(res?.message || `${label} exécuté.`);
-      reloadP();
-      reloadA();
+      const res = await api.forceSortie(p.employe_id);
+      toast.success(
+        `Sortie forcée — ${formatHeure(res.heure_sortie)}` +
+          (res.duree_minutes != null ? ` (${formatDuree(res.duree_minutes)})` : "")
+      );
+      reload();
     } catch (e) {
       toast.error(e.message);
     } finally {
-      setBusy(null);
+      setBusyId(null);
     }
   }
 
@@ -42,48 +78,88 @@ export default function PresencesPanel() {
     <div className="page">
       <div className="page-header">
         <div>
-          <div className="eyebrow">Pointage</div>
-          <h1>Présences &amp; absences</h1>
+          <div className="eyebrow">Temps réel</div>
+          <h1>Présence live</h1>
         </div>
-        <div className="flex gap-8">
-          <button className="btn btn-sm" onClick={() => runJob(api.jobCalculDuree, "Calcul des durées")} disabled={!!busy}>
-            {busy === "Calcul des durées" ? <span className="spinner" /> : <Icon name="clock" size={13} />}
-            Calculer les durées du jour
-          </button>
-          <button className="btn btn-sm" onClick={() => runJob(api.jobInsertAbsences, "Insertion des absences")} disabled={!!busy}>
-            {busy === "Insertion des absences" ? <span className="spinner" /> : <Icon name="bolt" size={13} />}
-            Marquer les absents du jour
+        <div className="flex gap-8" style={{ alignItems: "center" }}>
+          <span className={`badge ${presents.length > 0 ? "badge-green" : "badge-mute"}`}>
+            {presents.length} personne{presents.length !== 1 ? "s" : ""} dedans
+          </span>
+          <button className="btn btn-ghost btn-sm" onClick={reload} disabled={loading}>
+            <Icon name="refresh" size={13} />
+            Actualiser
           </button>
         </div>
       </div>
 
       <section className="panel">
         <div className="panel-header">
-          <h2>Présences</h2>
-          <div className="field" style={{ width: 180 }}>
-            <input type="date" value={jour} onChange={(e) => setJour(e.target.value)} />
-          </div>
+          <h2>Actuellement dans l&apos;entreprise</h2>
         </div>
         <div className="panel-body tight">
-          {loadingP && <div className="empty">Chargement…</div>}
-          {errorP && <div className="empty">{errorP}</div>}
-          {!loadingP && (presences || []).length === 0 && (
+          {loading && !data && <div className="empty">Chargement…</div>}
+          {error && <div className="empty">{error}</div>}
+          {!loading && presents.length === 0 && (
             <div className="empty">
-              <strong>Aucune présence</strong>
-              {jour ? "Aucun enregistrement pour cette date." : "Les entrées/sorties badgées apparaîtront ici."}
+              <strong>Personne à l&apos;intérieur</strong>
+              Les employés apparaissent ici dès qu&apos;ils badgent (carte + visage)
+              à l&apos;entrée. Ils disparaissent à la sortie.
             </div>
           )}
-          {(presences || []).length > 0 && (
+          {presents.length > 0 && (
             <div className="table-scroll">
               <table className="table">
-                <thead><tr><th>Employé</th><th>Date</th><th>Statut</th><th>Durée</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>Employé</th>
+                    <th>Poste</th>
+                    <th>Entrée</th>
+                    <th>Temps passé</th>
+                    <th>Carte</th>
+                    <th />
+                  </tr>
+                </thead>
                 <tbody>
-                  {presences.map((p) => (
-                    <tr key={p.id}>
-                      <td className="mono">#{p.id_employe}</td>
-                      <td className="mono dim">{p.datedujour}</td>
-                      <td><span className="badge badge-green">{p.statut || "—"}</span></td>
-                      <td className="mono">{formatDuree(p.dureetravail)}</td>
+                  {presents.map((p) => (
+                    <tr key={p.employe_id}>
+                      <td>
+                        <strong>
+                          {p.nom} {p.prenom || ""}
+                        </strong>{" "}
+                        <span className="mono dim">#{p.employe_id}</span>
+                        <div className="mute mono" style={{ fontSize: 11 }}>
+                          {p.matricule}
+                        </div>
+                      </td>
+                      <td>
+                        {p.id_poste ? (
+                          posteMap[p.id_poste] || `#${p.id_poste}`
+                        ) : (
+                          <span className="mute">—</span>
+                        )}
+                      </td>
+                      <td className="mono">{formatHeure(p.heure_entree)}</td>
+                      <td>
+                        <span className="badge badge-green">
+                          {formatDuree(p.minutes_depuis)}
+                        </span>
+                      </td>
+                      <td className="mono dim">{p.uidcarte || "—"}</td>
+                      <td style={{ textAlign: "right" }}>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => forcerSortie(p)}
+                          disabled={busyId === p.employe_id}
+                          title="Forcer la sortie (oubli de badge)"
+                        >
+                          {busyId === p.employe_id ? (
+                            <span className="spinner" />
+                          ) : (
+                            <Icon name="logout" size={13} />
+                          )}
+                          Sortir
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -94,31 +170,28 @@ export default function PresencesPanel() {
       </section>
 
       <section className="panel">
-        <div className="panel-header"><h2>Absences</h2></div>
-        <div className="panel-body tight">
-          {loadingA && <div className="empty">Chargement…</div>}
-          {!loadingA && (absences || []).length === 0 && (
-            <div className="empty">
-              <strong>Aucune absence enregistrée</strong>
-              Utilise "Marquer les absents du jour" pour générer les absences du jour.
-            </div>
-          )}
-          {(absences || []).length > 0 && (
-            <div className="table-scroll">
-              <table className="table">
-                <thead><tr><th>Employé</th><th>Date</th><th>Raison</th></tr></thead>
-                <tbody>
-                  {absences.map((a) => (
-                    <tr key={a.id}>
-                      <td className="mono">#{a.idemploye}</td>
-                      <td className="mono dim">{a.dateabsence}</td>
-                      <td>{a.raison || <span className="mute">Non justifiée</span>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div className="panel-header">
+          <h2>Comment ça marche</h2>
+        </div>
+        <div className="panel-body">
+          <ul className="dim" style={{ fontSize: 13, lineHeight: 1.7, margin: 0, paddingLeft: 18 }}>
+            <li>
+              Un employé est <strong>présent</strong> dès qu&apos;il présente carte + visage
+              et que l&apos;action est une <em>entrée</em>.
+            </li>
+            <li>
+              La prochaine scan (même carte + visage) devient automatiquement une{" "}
+              <em>sortie</em> — on enregistre l&apos;heure de sortie et la durée.
+            </li>
+            <li>
+              « Forcer sortie » sert si quelqu&apos;un part sans badger (fin de journée,
+              oubli…).
+            </li>
+            <li>
+              Le détail complet d&apos;un employé (toutes les entrées/sorties + graphique)
+              se trouve dans l&apos;onglet <strong>Employés</strong> → clic sur une ligne.
+            </li>
+          </ul>
         </div>
       </section>
     </div>

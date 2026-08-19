@@ -8,7 +8,7 @@ const NAV = [
   { id: "historique", label: "Historique", icon: "history" },
   { id: "postes", label: "Postes & roue", icon: "dial" },
   { id: "cartes", label: "Cartes RFID", icon: "cardId" },
-  { id: "presences", label: "Présences", icon: "clock" },
+  { id: "presences", label: "Présence live", icon: "clock" },
   { id: "simulation", label: "Simulation 7j", icon: "briefcase" },
   { id: "reglages", label: "Réglages", icon: "settings" },
 ];
