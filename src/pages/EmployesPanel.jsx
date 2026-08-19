@@ -4,81 +4,65 @@ import { useResource } from "../hooks/useResource";
 import { useToast } from "../context/ToastContext";
 import Icon from "../components/Icon";
 
-async function fetchAll() {
-  const [employes, postes, cartes] = await Promise.all([
-    api.listeEmployes(),
-    api.listePostes(),
-    api.listeCartes(),
-  ]);
-  return { employes, postes, cartes };
+function formatDuree(min) {
+  if (min === null || min === undefined) return "—";
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${h}h${String(m).padStart(2, "0")}`;
 }
 
-export default function EmployesPanel() {
-  const { data, loading, error, reload } = useResource(fetchAll, {
-    refreshOn: ["employe_actif", "roulette", "vire_manuel", "carte_assignee", "simulation_end"],
-  });
+async function fetchMeta() {
+  const [employes, postes] = await Promise.all([api.listeEmployes(), api.listePostes()]);
+  return { employes, postes };
+}
+
+export default function PresencesPanel() {
+  const [jour, setJour] = useState("");
   const toast = useToast();
-  const [busyId, setBusyId] = useState(null);
-  const [filter, setFilter] = useState("tous");
+  const [busy, setBusy] = useState(null);
 
-  const posteMap = useMemo(() => Object.fromEntries((data?.postes || []).map((p) => [p.id, p.type_poste])), [data]);
-  const carteMap = useMemo(() => Object.fromEntries((data?.cartes || []).map((c) => [c.id, c.uidcarte])), [data]);
-  const cartesLibres = useMemo(() => (data?.cartes || []).filter((c) => !(data?.employes || []).some((e) => e.carterfid_id === c.id)), [data]);
+  // Table de correspondance id_employe -> employé / poste, comme dans EmployesPanel.
+  const { data: meta } = useResource(fetchMeta, {
+    refreshOn: ["employe_actif", "roulette", "vire_manuel"],
+  });
+  const employeMap = useMemo(
+    () => Object.fromEntries((meta?.employes || []).map((e) => [e.id, e])),
+    [meta]
+  );
+  const posteMap = useMemo(
+    () => Object.fromEntries((meta?.postes || []).map((p) => [p.id, p.type_poste])),
+    [meta]
+  );
 
-  const employes = (data?.employes || []).filter((e) => filter === "tous" || e.status === filter);
-
-  async function toggleStatus(emp) {
-    setBusyId(emp.id);
-    try {
-      const next = emp.status === "Actif" ? "Inactif" : "Actif";
-      await api.updateEmploye(emp.id, { status: next });
-      toast.success(`${emp.nom} passé ${next.toLowerCase()}.`);
-      reload();
-    } catch (e) {
-      toast.error(e.message);
-    } finally {
-      setBusyId(null);
-    }
+  function nomEmploye(id) {
+    const e = employeMap[id];
+    return e ? `${e.nom} ${e.prenom || ""}`.trim() : `#${id}`;
+  }
+  function posteEmploye(id) {
+    const e = employeMap[id];
+    if (!e?.id_poste) return <span className="mute">—</span>;
+    return posteMap[e.id_poste] || `#${e.id_poste}`;
   }
 
-  async function assignerCarte(emp, carteId) {
-    if (!carteId) return;
-    setBusyId(emp.id);
-    try {
-      await api.updateEmploye(emp.id, { carterfid_id: Number(carteId) });
-      toast.success(`Carte assignée à ${emp.nom}.`);
-      reload();
-    } catch (e) {
-      toast.error(e.message);
-    } finally {
-      setBusyId(null);
-    }
-  }
+  const { data: presences, loading: loadingP, error: errorP, reload: reloadP } = useResource(
+    () => api.listePresences(jour ? { jour } : {}),
+    { refreshOn: ["entree_entreprise", "sortie_entreprise", "simulation_day"], deps: [jour] },
+  );
+  const { data: absences, loading: loadingA, reload: reloadA } = useResource(api.listeAbsences, {
+    refreshOn: ["simulation_day", "simulation_end"],
+  });
 
-  async function supprimerVisage(emp) {
-    if (!window.confirm(`Supprimer l'encoding facial de ${emp.nom} ?`)) return;
-    setBusyId(emp.id);
+  async function runJob(fn, label) {
+    setBusy(label);
     try {
-      await api.supprimerVisage(emp.id);
-      toast.success("Encoding facial supprimé.");
+      const res = await fn();
+      toast.success(res?.message || `${label} exécuté.`);
+      reloadP();
+      reloadA();
     } catch (e) {
       toast.error(e.message);
     } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function supprimer(emp) {
-    if (!window.confirm(`Supprimer définitivement l'employé ${emp.nom} ? Action irréversible.`)) return;
-    setBusyId(emp.id);
-    try {
-      await api.supprimerEmploye(emp.id);
-      toast.success(`${emp.nom} supprimé.`);
-      reload();
-    } catch (e) {
-      toast.error(e.message);
-    } finally {
-      setBusyId(null);
+      setBusy(null);
     }
   }
 
@@ -86,82 +70,79 @@ export default function EmployesPanel() {
     <div className="page">
       <div className="page-header">
         <div>
-          <div className="eyebrow">Registre du personnel</div>
-          <h1>Employés</h1>
+          <div className="eyebrow">Pointage</div>
+          <h1>Présences &amp; absences</h1>
         </div>
-        <div className="segmented">
-          {["tous", "Actif", "Inactif"].map((f) => (
-            <button key={f} className={`segmented-item ${filter === f ? "active" : ""}`} onClick={() => setFilter(f)}>
-              {f === "tous" ? "Tous" : f}
-            </button>
-          ))}
+        <div className="flex gap-8">
+          <button className="btn btn-sm" onClick={() => runJob(api.jobCalculDuree, "Calcul des durées")} disabled={!!busy}>
+            {busy === "Calcul des durées" ? <span className="spinner" /> : <Icon name="clock" size={13} />}
+            Calculer les durées du jour
+          </button>
+          <button className="btn btn-sm" onClick={() => runJob(api.jobInsertAbsences, "Insertion des absences")} disabled={!!busy}>
+            {busy === "Insertion des absences" ? <span className="spinner" /> : <Icon name="bolt" size={13} />}
+            Marquer les absents du jour
+          </button>
         </div>
       </div>
 
       <section className="panel">
+        <div className="panel-header">
+          <h2>Présences</h2>
+          <div className="field" style={{ width: 180 }}>
+            <input type="date" value={jour} onChange={(e) => setJour(e.target.value)} />
+          </div>
+        </div>
         <div className="panel-body tight">
-          {loading && <div className="empty">Chargement…</div>}
-          {error && <div className="empty">{error}</div>}
-          {!loading && employes.length === 0 && (
+          {loadingP && <div className="empty">Chargement…</div>}
+          {errorP && <div className="empty">{errorP}</div>}
+          {!loadingP && (presences || []).length === 0 && (
             <div className="empty">
-              <strong>Aucun employé</strong>
-              Les candidats acceptés apparaîtront ici une fois promus.
+              <strong>Aucune présence</strong>
+              {jour ? "Aucun enregistrement pour cette date." : "Les entrées/sorties badgées apparaîtront ici."}
             </div>
           )}
-          {employes.length > 0 && (
+          {(presences || []).length > 0 && (
             <div className="table-scroll">
               <table className="table">
-                <thead>
-                  <tr>
-                    <th>Matricule</th>
-                    <th>Nom</th>
-                    <th>Poste</th>
-                    <th>Statut</th>
-                    <th>Carte RFID</th>
-                    <th style={{ textAlign: "right" }}>Actions</th>
-                  </tr>
-                </thead>
+                <thead><tr><th>Employé</th><th>Poste</th><th>Date</th><th>Statut</th><th>Durée</th></tr></thead>
                 <tbody>
-                  {employes.map((e) => (
-                    <tr key={e.id} className={e.status !== "Actif" ? "row-fade" : ""}>
-                      <td className="mono dim">{e.matricule}</td>
-                      <td>{e.nom} {e.prenom || ""}</td>
-                      <td>{e.id_poste ? posteMap[e.id_poste] || `#${e.id_poste}` : <span className="mute">— pas encore roulé</span>}</td>
-                      <td>
-                        <span className={`badge ${e.status === "Actif" ? "badge-green" : "badge-red"}`}>{e.status}</span>
-                      </td>
-                      <td>
-                        {e.carterfid_id ? (
-                          <span className="mono">{carteMap[e.carterfid_id] || `#${e.carterfid_id}`}</span>
-                        ) : cartesLibres.length > 0 ? (
-                          <select
-                            className="mini-select"
-                            defaultValue=""
-                            onChange={(ev) => assignerCarte(e, ev.target.value)}
-                            disabled={busyId === e.id}
-                          >
-                            <option value="" disabled>Assigner…</option>
-                            {cartesLibres.map((c) => (
-                              <option key={c.id} value={c.id}>{c.uidcarte}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <span className="mute">aucune libre</span>
-                        )}
-                      </td>
-                      <td>
-                        <div className="flex gap-8" style={{ justifyContent: "flex-end" }}>
-                          <button className="btn btn-ghost btn-sm" onClick={() => toggleStatus(e)} disabled={busyId === e.id}>
-                            {e.status === "Actif" ? "Désactiver" : "Réactiver"}
-                          </button>
-                          <button className="btn btn-ghost btn-sm" onClick={() => supprimerVisage(e)} disabled={busyId === e.id} title="Supprimer l'encoding facial">
-                            Visage
-                          </button>
-                          <button className="btn btn-danger btn-sm" onClick={() => supprimer(e)} disabled={busyId === e.id}>
-                            <Icon name="trash" size={13} />
-                          </button>
-                        </div>
-                      </td>
+                  {presences.map((p) => (
+                    <tr key={p.id}>
+                      <td>{nomEmploye(p.id_employe)} <span className="mono dim">#{p.id_employe}</span></td>
+                      <td>{posteEmploye(p.id_employe)}</td>
+                      <td className="mono dim">{p.datedujour}</td>
+                      <td><span className="badge badge-green">{p.statut || "—"}</span></td>
+                      <td className="mono">{formatDuree(p.dureetravail)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header"><h2>Absences</h2></div>
+        <div className="panel-body tight">
+          {loadingA && <div className="empty">Chargement…</div>}
+          {!loadingA && (absences || []).length === 0 && (
+            <div className="empty">
+              <strong>Aucune absence enregistrée</strong>
+              Utilise "Marquer les absents du jour" pour générer les absences du jour.
+            </div>
+          )}
+          {(absences || []).length > 0 && (
+            <div className="table-scroll">
+              <table className="table">
+                <thead><tr><th>Employé</th><th>Poste</th><th>Date</th><th>Raison</th></tr></thead>
+                <tbody>
+                  {absences.map((a) => (
+                    <tr key={a.id}>
+                      <td>{nomEmploye(a.idemploye)} <span className="mono dim">#{a.idemploye}</span></td>
+                      <td>{posteEmploye(a.idemploye)}</td>
+                      <td className="mono dim">{a.dateabsence}</td>
+                      <td>{a.raison || <span className="mute">Non justifiée</span>}</td>
                     </tr>
                   ))}
                 </tbody>
