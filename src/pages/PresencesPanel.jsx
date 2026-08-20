@@ -2,9 +2,10 @@
  * Présence live — une fiche par employé actif.
  * Position = entrée (carte.isentree) ou sortie.
  * Clignote en rouge sur acces_refuse (mauvais visage + bonne carte).
+ * L'alerte reste active jusqu'à clic sur « Stopper » (pas de timeout auto).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useResource } from "../hooks/useResource";
 import { useWs } from "../context/WsContext";
@@ -23,6 +24,19 @@ function formatHeure(h) {
   return h.length >= 5 ? h.slice(0, 5) : h;
 }
 
+function formatAlerteDateHeure(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return d.toLocaleString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 async function fetchBoard() {
   const [employes, presents, postes] = await Promise.all([
     api.listeEmployes(),
@@ -36,8 +50,8 @@ export default function PresencesPanel() {
   const toast = useToast();
   const { subscribe } = useWs();
   const [busyId, setBusyId] = useState(null);
-  const [alertIds, setAlertIds] = useState(() => new Set());
-  const alertTimers = useRef(new Map());
+  // Map employe_id -> timestamp ISO de l'alerte (persiste jusqu'à Stopper)
+  const [alerts, setAlerts] = useState(() => new Map());
 
   const { data, loading, error, reload } = useResource(fetchBoard, {
     refreshOn: [
@@ -50,32 +64,28 @@ export default function PresencesPanel() {
     ],
   });
 
-  // Flash rouge ~2,5 s sur la fiche concernée
-  const flashAlert = useCallback((employeId) => {
+  const flashAlert = useCallback((employeId, ts) => {
     if (!employeId) return;
-    setAlertIds((prev) => new Set(prev).add(employeId));
-    const prevTimer = alertTimers.current.get(employeId);
-    if (prevTimer) clearTimeout(prevTimer);
-    const t = setTimeout(() => {
-      setAlertIds((prev) => {
-        const next = new Set(prev);
-        next.delete(employeId);
-        return next;
-      });
-      alertTimers.current.delete(employeId);
-    }, 2500);
-    alertTimers.current.set(employeId, t);
+    setAlerts((prev) => {
+      const next = new Map(prev);
+      next.set(employeId, ts || new Date().toISOString());
+      return next;
+    });
+  }, []);
+
+  const stopperAlerte = useCallback((employeId) => {
+    setAlerts((prev) => {
+      const next = new Map(prev);
+      next.delete(employeId);
+      return next;
+    });
   }, []);
 
   useEffect(() => {
     return subscribe(["acces_refuse"], (ev) => {
-      flashAlert(ev.employe_id);
+      flashAlert(ev.employe_id, ev._ts || new Date().toISOString());
     });
   }, [subscribe, flashAlert]);
-
-  useEffect(() => () => {
-    alertTimers.current.forEach((t) => clearTimeout(t));
-  }, []);
 
   const posteMap = useMemo(
     () => Object.fromEntries((data?.postes || []).map((p) => [p.id, p.type_poste])),
@@ -146,7 +156,8 @@ export default function PresencesPanel() {
           {actifs.map((e) => {
             const live = presentMap.get(e.id);
             const dedans = Boolean(live);
-            const alerte = alertIds.has(e.id);
+            const alerteTs = alerts.get(e.id);
+            const alerte = Boolean(alerteTs);
             const poste = e.id_poste ? posteMap[e.id_poste] || `#${e.id_poste}` : "—";
             const uid = live?.uidcarte /* si live */ || null;
 
@@ -187,6 +198,37 @@ export default function PresencesPanel() {
                   <span className="mute">Carte</span>
                   <span className="mono dim">{uid || e.matricule /* fallback */ || "—"}</span>
                 </div>
+
+                {alerte && (
+                  <div
+                    className="presence-card-alert"
+                    style={{
+                      marginTop: 10,
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "1px solid var(--red, #e11)",
+                      background: "rgba(220, 38, 38, 0.12)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                    }}
+                  >
+                    <div style={{ fontSize: 12.5, color: "var(--red, #e11)" }}>
+                      Alerte le {formatAlerteDateHeure(alerteTs)}
+                      <span className="mute" style={{ display: "block", marginTop: 2 }}>
+                        Accès refusé (visage non reconnu)
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      style={{ width: "100%" }}
+                      onClick={() => stopperAlerte(e.id)}
+                    >
+                      Stopper
+                    </button>
+                  </div>
+                )}
 
                 {dedans && (
                   <button
