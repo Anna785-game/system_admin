@@ -1,8 +1,8 @@
 PROJECT DUMP
 ================================================================================
 Projet : sys_admin
-Généré le : 2026-08-20 17:27:32
-Fichiers inclus : 26
+Généré le : 2026-08-21 00:50:37
+Fichiers inclus : 25
 ================================================================================
 
 ARBORESCENCE
@@ -22,7 +22,6 @@ sys_admin/
 │   ├── components/
 │   │   ├── Icon.jsx
 │   │   ├── LiveFeed.jsx
-│   │   ├── RouletteOverlay.jsx
 │   │   ├── Sidebar.jsx
 │   │   └── Topbar.jsx
 │   ├── constants/
@@ -155,8 +154,10 @@ export const api = {
     }),
 
   // ---- historique journalier ------------------------------------------
-  historiqueJour: (dateISO) =>
-    request(`/historique/jour?date=${encodeURIComponent(dateISO)}`),
+  historiqueJour: (dateISO, source = "normal") =>
+    request(
+      `/historique/jour?date=${encodeURIComponent(dateISO)}&source=${encodeURIComponent(source)}`
+    ),
 
   // ---- virer un employé (depuis le panneau Employés) -------------------
   virerEmploye: (id) =>
@@ -347,153 +348,6 @@ export function FeedList({ limit = 100 }) {
 
 ================================================================================
 
-# src/components/RouletteOverlay.jsx
---------------------------------------------------------------------------------
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useWs } from "../context/WsContext";
-import { posteInfo, segmentCenterAngle, toneHex } from "../constants/postes";
-
-const SPIN_DURATION_MS = 6800;
-const EXTRA_TURNS_DEG = 7200;
-const REVEAL_HOLD_MS = 7000;
-
-export default function RouletteOverlay() {
-  const { subscribe } = useWs();
-  const [round, setRound] = useState(null);
-  const [phase, setPhase] = useState("idle"); // idle | spinning | reveal
-  const rotationRef = useRef(0);
-  const [rotation, setRotation] = useState(0);
-  const [transitionEnabled, setTransitionEnabled] = useState(false);
-  const dismissTimer = useRef(null);
-  const revealTimer = useRef(null);
-
-  const launch = useCallback((data) => {
-    clearTimeout(dismissTimer.current);
-    clearTimeout(revealTimer.current);
-
-    const poste = data.poste_gagnant;
-    const center = segmentCenterAngle(poste);
-    const jitter = (Math.random() - 0.5) * 70;
-    const target = ((center + jitter) % 360 + 360) % 360;
-
-    const currentMod = ((rotationRef.current % 360) + 360) % 360;
-    const delta = ((target - currentMod) % 360 + 360) % 360;
-    const next = rotationRef.current + EXTRA_TURNS_DEG + delta;
-    rotationRef.current = next;
-
-    setRound({
-      candidatNom: data.candidat?.nom || "Le candidat",
-      poste,
-      repartition: data.repartition || [],
-    });
-
-    // 1. Afficher la roue SANS transition (position actuelle)
-    setTransitionEnabled(false);
-    setPhase("spinning");
-    setRotation(rotationRef.current - EXTRA_TURNS_DEG - delta); // forcer le frame de départ
-
-    // 2. Au frame suivant, activer la transition et aller à la cible
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setTransitionEnabled(true);
-        setRotation(next);
-      });
-    });
-
-    revealTimer.current = setTimeout(() => setPhase("reveal"), SPIN_DURATION_MS);
-    dismissTimer.current = setTimeout(() => setPhase("idle"), SPIN_DURATION_MS + REVEAL_HOLD_MS);
-  }, []);
-
-  useEffect(() => subscribe(["roulette"], launch), [subscribe, launch]);
-
-  useEffect(() => () => {
-    clearTimeout(dismissTimer.current);
-    clearTimeout(revealTimer.current);
-  }, []);
-
-  if (phase === "idle" || !round) return null;
-
-  const info = posteInfo(round.poste);
-  const hex = toneHex(info.tone);
-
-  return (
-    <div className="roulette-overlay" role="dialog" aria-label="Tirage du poste">
-      <button className="roulette-close" onClick={() => setPhase("idle")} aria-label="Fermer">✕</button>
-
-      <div className="roulette-heading">
-        <div className="eyebrow">Tirage en cours</div>
-        <h1 className="roulette-name">{round.candidatNom}</h1>
-      </div>
-
-      <div className="roulette-stage">
-        <div className="roulette-pointer" />
-        <div
-          className="roulette-wheel-wrap"
-          style={{
-            transform: `rotate(${rotation}deg)`,
-            transitionDuration: transitionEnabled ? `${SPIN_DURATION_MS}ms` : "0ms",
-          }}
-        >
-          <img src="/roulette.png" alt="Roue des postes" className="roulette-wheel-img" />
-        </div>
-        <div className="roulette-hub-glow" />
-      </div>
-
-      <div
-        className={`roulette-result ${phase === "reveal" ? "show" : ""}`}
-        style={{ "--tone": hex.solid, "--tone-bright": hex.bright }}
-      >
-        <div className="roulette-result-icon">{info.icon}</div>
-        <div className="eyebrow">Poste attribué</div>
-        <div className="roulette-result-poste">{info.poste}</div>
-        {phase === "reveal" && <Confetti tone={info.tone} />}
-      </div>
-
-      {round.repartition.length > 0 && (
-        <div className="roulette-odds">
-          {round.repartition.map((r) => (
-            <span key={r.poste} className="roulette-odds-item mono">
-              {r.poste} · {r.pourcentage}%
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Confetti({ tone }) {
-  const pieces = Array.from({ length: 26 });
-  const colors = { red: "var(--red-bright)", blue: "var(--blue-bright)", yellow: "var(--yellow-bright)", mute: "var(--gold-bright)" };
-  return (
-    <div className="confetti">
-      {pieces.map((_, i) => {
-        const angle = (360 / pieces.length) * i;
-        const dist = 90 + Math.random() * 70;
-        const delay = Math.random() * 0.15;
-        const size = 5 + Math.random() * 5;
-        const palette = [colors[tone] || colors.mute, "var(--gold-bright)", "var(--text)"];
-        return (
-          <span
-            key={i}
-            className="confetti-piece"
-            style={{
-              "--angle": `${angle}deg`,
-              "--dist": `${dist}px`,
-              "--delay": `${delay}s`,
-              width: size,
-              height: size * 0.4,
-              background: palette[i % palette.length],
-            }}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-================================================================================
-
 # src/components/Sidebar.jsx
 --------------------------------------------------------------------------------
 import Icon from "./Icon";
@@ -504,7 +358,7 @@ const NAV = [
   { id: "candidats", label: "Candidats", icon: "users" },
   { id: "employes", label: "Employés", icon: "idCard" },
   { id: "historique", label: "Historique", icon: "history" },
-  { id: "postes", label: "Postes & roue", icon: "dial" },
+  { id: "postes", label: "Postes", icon: "dial" },
   { id: "cartes", label: "Cartes RFID", icon: "cardId" },
   { id: "presences", label: "Présence live", icon: "clock" },
   { id: "simulation", label: "Simulation 7j", icon: "briefcase" },
@@ -1961,21 +1815,11 @@ export default function EmployesPanel() {
 # src/pages/HistoriquePanel.jsx
 --------------------------------------------------------------------------------
 /**
- * Historique journalier.
- *
- * - Sélecteur de date en haut (calendrier natif + flèches J-1 / J+1 / Aujourd'hui)
- * - Titre long : « Jeudi 20 août 2026 »
- * - Liste des employés ayant un événement ce jour-là :
- *     présent (entrée/sortie), absent, ou viré
- * - Clic sur une ligne → détail du jour uniquement (pas de timeline multi-jours)
- * - Rafraîchissement temps réel via WebSocket (entrées, sorties, virages, simu)
- *
- * Un employé n'apparaît un jour J que s'il a une présence, une absence ou un
- * licenciement enregistré pour J. S'il est viré le 21, il n'apparaît plus le 22.
- * S'il est seulement absent le 21, il peut réapparaître le 22 (s'il a un
- * événement ce jour-là).
+ * Historique journalier — mode Normal | Simulation
+ * - Recherche par nom
+ * - Clic nom → parcours multi-jours
+ * - Clic jour → détail entrées/sorties de ce jour
  */
-
 import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useResource } from "../hooks/useResource";
@@ -2001,7 +1845,6 @@ function formatTitreLong(iso) {
     month: "long",
     year: "numeric",
   });
-  // Capitalise le jour de la semaine
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
@@ -2031,13 +1874,20 @@ const STATUT_LABEL = {
 };
 
 export default function HistoriquePanel() {
+  const [mode, setMode] = useState("normal"); // "normal" | "simulation"
   const [jour, setJour] = useState(() => toISODate(new Date()));
-  const [selected, setSelected] = useState(null);
+  const [search, setSearch] = useState("");
+  // vue : "jour" | "parcours" | "jour-detail"
+  const [vue, setVue] = useState("jour");
+  const [selectedEmp, setSelectedEmp] = useState(null); // ligne du jour
+  const [parcours, setParcours] = useState(null);
+  const [parcoursLoading, setParcoursLoading] = useState(false);
+  const [jourDetail, setJourDetail] = useState(null); // date ISO dans le parcours
 
   const { data, loading, error, reload } = useResource(
-    () => api.historiqueJour(jour),
+    () => api.historiqueJour(jour, mode),
     {
-      deps: [jour],
+      deps: [jour, mode],
       refreshOn: [
         "entree_entreprise",
         "sortie_entreprise",
@@ -2051,36 +1901,84 @@ export default function HistoriquePanel() {
 
   const lignes = data?.employes || [];
 
+  const filtrées = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return lignes;
+    return lignes.filter((e) => {
+      const nom = `${e.nom || ""} ${e.prenom || ""}`.toLowerCase();
+      const mat = (e.matricule || "").toLowerCase();
+      return nom.includes(q) || mat.includes(q);
+    });
+  }, [lignes, search]);
+
   const counts = useMemo(() => {
     const c = { present: 0, absent: 0, vire: 0 };
-    for (const e of lignes) {
+    for (const e of filtrées) {
       if (c[e.statut_jour] != null) c[e.statut_jour] += 1;
     }
     return c;
-  }, [lignes]);
+  }, [filtrées]);
 
   function shiftJour(delta) {
     const d = parseISODate(jour);
     d.setDate(d.getDate() + delta);
     setJour(toISODate(d));
-    setSelected(null);
+    setSelectedEmp(null);
+    setVue("jour");
   }
 
   function goToday() {
     setJour(toISODate(new Date()));
-    setSelected(null);
+    setSelectedEmp(null);
+    setVue("jour");
   }
 
-  const detail = selected
-    ? lignes.find((e) => e.employe_id === selected) || null
-    : null;
+  async function ouvrirParcours(emp) {
+    setSelectedEmp(emp);
+    setVue("parcours");
+    setParcours(null);
+    setJourDetail(null);
+    setParcoursLoading(true);
+    try {
+      const p = await api.parcoursEmploye(emp.employe_id);
+      setParcours(p);
+    } catch {
+      setParcours(null);
+    } finally {
+      setParcoursLoading(false);
+    }
+  }
+
+  // Grouper le timeline par date
+  const joursParcours = useMemo(() => {
+    if (!parcours?.timeline) return [];
+    const map = new Map();
+    for (const ev of parcours.timeline) {
+      if (!map.has(ev.date)) map.set(ev.date, []);
+      map.get(ev.date).push(ev);
+    }
+    // plus récent en premier
+    return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  }, [parcours]);
+
+  function resumeJour(events) {
+    const hasVire = events.some(
+      (e) => e.type === "absence" && (e.detail || "").startsWith("Viré")
+    );
+    if (hasVire) return { statut: "vire", label: "Viré" };
+    const hasAbs = events.some((e) => e.type === "absence");
+    if (hasAbs) return { statut: "absent", label: "Absent" };
+    return { statut: "present", label: "Présent" };
+  }
 
   return (
     <div className="page">
       <div className="page-header">
         <div>
           <div className="eyebrow">Archives journalières</div>
-          <h1>Historique</h1>
+          <h1>
+            {mode === "simulation" ? "Historique simulation" : "Historique"}
+          </h1>
         </div>
         <button className="btn btn-ghost btn-sm" onClick={reload} disabled={loading}>
           <Icon name="refresh" size={13} />
@@ -2088,248 +1986,293 @@ export default function HistoriquePanel() {
         </button>
       </div>
 
-      {/* Sélecteur de date */}
-      <div
-        className="panel"
-        style={{ marginBottom: 16, padding: "14px 18px" }}
-      >
-        <div
-          className="flex gap-8"
-          style={{
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 12,
+      {/* Toggle Normal / Simulation */}
+      <div className="flex gap-8" style={{ marginBottom: 14, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          className={`btn btn-sm ${mode === "normal" ? "btn-primary" : "btn-ghost"}`}
+          onClick={() => {
+            setMode("normal");
+            setVue("jour");
+            setSelectedEmp(null);
           }}
         >
-          <div className="flex gap-8" style={{ alignItems: "center" }}>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => shiftJour(-1)}
-              title="Jour précédent"
-            >
-              ‹
-            </button>
-            <input
-              type="date"
-              value={jour}
-              onChange={(e) => {
-                if (e.target.value) {
-                  setJour(e.target.value);
-                  setSelected(null);
-                }
-              }}
-              style={{
-                fontFamily: "inherit",
-                fontSize: 14,
-                padding: "6px 10px",
-                borderRadius: 8,
-                border: "1px solid var(--border, #333)",
-                background: "var(--bg-elevated, #1a1a1a)",
-                color: "var(--text)",
-              }}
-            />
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => shiftJour(1)}
-              title="Jour suivant"
-            >
-              ›
-            </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={goToday}>
-              Aujourd'hui
-            </button>
-          </div>
-
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 16, fontWeight: 600 }}>
-              {formatTitreLong(jour)}
-            </div>
-            <div className="mute mono" style={{ fontSize: 12, marginTop: 2 }}>
-              {counts.present} présent{counts.present !== 1 ? "s" : ""} ·{" "}
-              {counts.absent} absent{counts.absent !== 1 ? "s" : ""} ·{" "}
-              {counts.vire} viré{counts.vire !== 1 ? "s" : ""}
-            </div>
-          </div>
-        </div>
+          Historique normal
+        </button>
+        <button
+          type="button"
+          className={`btn btn-sm ${mode === "simulation" ? "btn-primary" : "btn-ghost"}`}
+          onClick={() => {
+            setMode("simulation");
+            setVue("jour");
+            setSelectedEmp(null);
+          }}
+        >
+          Historique simulation
+        </button>
       </div>
 
-      <section className="panel">
-        <div className="panel-header">
-          <h2>
-            {lignes.length} employé{lignes.length !== 1 ? "s" : ""} ce jour
-          </h2>
-        </div>
-        <div className="panel-body tight">
-          {loading && !data && <div className="empty">Chargement…</div>}
-          {error && <div className="empty">{error}</div>}
-          {!loading && lignes.length === 0 && (
-            <div className="empty">
-              <strong>Rien pour ce jour</strong>
-              Aucune présence, absence ni licenciement enregistré le{" "}
-              {formatTitreLong(jour)}.
-            </div>
-          )}
-          {lignes.length > 0 && (
-            <div className="table-scroll">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Nom</th>
-                    <th>Poste</th>
-                    <th>Statut du jour</th>
-                    <th>Entrée</th>
-                    <th>Sortie</th>
-                    <th>Durée</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lignes.map((e) => (
-                    <tr
-                      key={e.employe_id}
-                      style={{ cursor: "pointer" }}
-                      onClick={() =>
-                        setSelected(
-                          selected === e.employe_id ? null : e.employe_id
-                        )
-                      }
-                      className={selected === e.employe_id ? "row-selected" : ""}
-                    >
-                      <td>
-                        <strong>
-                          {e.nom} {e.prenom || ""}
-                        </strong>
-                      </td>
-                      <td>{e.poste || <span className="mute">—</span>}</td>
-                      <td>
-                        <span
-                          className={`badge ${
-                            STATUT_BADGE[e.statut_jour] || "badge-mute"
-                          }`}
-                        >
-                          {STATUT_LABEL[e.statut_jour] || e.statut_jour}
-                        </span>
-                      </td>
-                      <td className="mono">
-                        {e.statut_jour === "present"
-                          ? formatHeure(e.heure_entree)
-                          : "—"}
-                      </td>
-                      <td className="mono">
-                        {e.statut_jour === "present"
-                          ? formatHeure(e.heure_sortie)
-                          : "—"}
-                      </td>
-                      <td className="mono">
-                        {e.statut_jour === "present" && e.duree_minutes != null
-                          ? formatDuree(e.duree_minutes)
-                          : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </section>
+      {/* Recherche */}
+      <div className="panel" style={{ marginBottom: 16, padding: "12px 18px" }}>
+        <input
+          type="search"
+          placeholder="Rechercher un nom ou matricule…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{
+            width: "100%",
+            maxWidth: 360,
+            fontFamily: "inherit",
+            fontSize: 14,
+            padding: "8px 12px",
+          }}
+        />
+      </div>
 
-      {/* Détail du jour pour l'employé sélectionné */}
-      {detail && (
-        <section className="panel" style={{ marginTop: 16 }}>
+      {/* Sélecteur de date (vue jour) */}
+      {vue === "jour" && (
+        <div className="panel" style={{ marginBottom: 16, padding: "14px 18px" }}>
+          <div
+            className="flex gap-8"
+            style={{
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 12,
+            }}
+          >
+            <div className="flex gap-8" style={{ alignItems: "center" }}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => shiftJour(-1)}>
+                ‹
+              </button>
+              <input
+                type="date"
+                value={jour}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    setJour(e.target.value);
+                    setSelectedEmp(null);
+                  }
+                }}
+                style={{ fontFamily: "inherit", fontSize: 14, padding: "6px 10px" }}
+              />
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => shiftJour(1)}>
+                ›
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={goToday}>
+                Aujourd'hui
+              </button>
+            </div>
+            <strong>{formatTitreLong(jour)}</strong>
+            <div className="flex gap-8">
+              <span className="badge badge-green">{counts.present} présent</span>
+              <span className="badge badge-yellow">{counts.absent} absent</span>
+              <span className="badge badge-red">{counts.vire} viré</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Liste du jour */}
+      {vue === "jour" && (
+        <section className="panel">
           <div className="panel-header">
             <h2>
-              {detail.nom} {detail.prenom || ""} — {formatTitreLong(jour)}
+              {mode === "simulation" ? "Simulations ce jour" : "Employés ce jour"}
+            </h2>
+          </div>
+          <div className="panel-body tight">
+            {loading && !data && <div className="empty">Chargement…</div>}
+            {error && <div className="empty">{error}</div>}
+            {!loading && filtrées.length === 0 && (
+              <div className="empty">
+                <strong>Personne ce jour</strong>
+                {search
+                  ? "Aucun résultat pour cette recherche."
+                  : mode === "simulation"
+                    ? "Aucune simulation n'a d'événement à cette date."
+                    : "Aucun pointage / absence / virage enregistré."}
+              </div>
+            )}
+            {filtrées.length > 0 && (
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Nom</th>
+                      <th>Poste</th>
+                      <th>Statut</th>
+                      <th>Entrée</th>
+                      <th>Sortie</th>
+                      <th>Durée</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtrées.map((e) => (
+                      <tr
+                        key={e.employe_id}
+                        style={{ cursor: "pointer" }}
+                        onClick={() => ouvrirParcours(e)}
+                      >
+                        <td>
+                          <strong>
+                            {e.nom} {e.prenom || ""}
+                          </strong>
+                          <div className="mono dim" style={{ fontSize: 11 }}>
+                            {e.matricule}
+                          </div>
+                        </td>
+                        <td>{e.poste || <span className="mute">—</span>}</td>
+                        <td>
+                          <span className={`badge ${STATUT_BADGE[e.statut_jour] || "badge-mute"}`}>
+                            {STATUT_LABEL[e.statut_jour] || e.statut_jour}
+                          </span>
+                        </td>
+                        <td className="mono">
+                          {e.statut_jour === "present" ? formatHeure(e.heure_entree) : "—"}
+                        </td>
+                        <td className="mono">
+                          {e.statut_jour === "present" ? formatHeure(e.heure_sortie) : "—"}
+                        </td>
+                        <td className="mono">
+                          {e.statut_jour === "present" && e.duree_minutes != null
+                            ? formatDuree(e.duree_minutes)
+                            : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* Parcours multi-jours */}
+      {vue === "parcours" && selectedEmp && (
+        <section className="panel">
+          <div className="panel-header">
+            <h2>
+              Parcours — {selectedEmp.nom} {selectedEmp.prenom || ""}
             </h2>
             <button
               className="btn btn-ghost btn-sm"
-              onClick={() => setSelected(null)}
+              onClick={() => {
+                setVue("jour");
+                setParcours(null);
+                setJourDetail(null);
+              }}
             >
-              <Icon name="x" size={13} />
+              <Icon name="x" size={13} /> Retour au jour
             </button>
           </div>
           <div className="panel-body">
             <div className="drawer-meta" style={{ marginBottom: 18 }}>
               <div>
                 <span className="mute">Matricule</span>
-                <div className="mono">{detail.matricule || "—"}</div>
+                <div className="mono">{selectedEmp.matricule || "—"}</div>
               </div>
               <div>
                 <span className="mute">Poste</span>
-                <div>{detail.poste || "—"}</div>
-              </div>
-              <div>
-                <span className="mute">Statut ce jour</span>
-                <div>
-                  <span
-                    className={`badge ${
-                      STATUT_BADGE[detail.statut_jour] || "badge-mute"
-                    }`}
-                  >
-                    {STATUT_LABEL[detail.statut_jour] || detail.statut_jour}
-                  </span>
-                </div>
+                <div>{selectedEmp.poste || "—"}</div>
               </div>
             </div>
 
-            {detail.statut_jour === "vire" && (
-              <p className="sous-texte" style={{ margin: 0 }}>
-                Licencié ce jour
-                {detail.raison ? ` — ${detail.raison}` : "."}
-              </p>
+            {parcoursLoading && <div className="empty">Chargement du parcours…</div>}
+            {!parcoursLoading && joursParcours.length === 0 && (
+              <div className="empty">Aucun événement enregistré pour cet employé.</div>
             )}
 
-            {detail.statut_jour === "absent" && (
-              <p className="sous-texte" style={{ margin: 0 }}>
-                Absent
-                {detail.raison ? ` — ${detail.raison}` : "."}
-              </p>
-            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {joursParcours.map(([dateISO, events]) => {
+                const r = resumeJour(events);
+                return (
+                  <button
+                    key={dateISO}
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{
+                      textAlign: "left",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "12px 14px",
+                      border: "1px solid var(--border, #333)",
+                      borderRadius: 8,
+                    }}
+                    onClick={() => {
+                      setJourDetail(dateISO);
+                      setVue("jour-detail");
+                    }}
+                  >
+                    <span>
+                      <strong>{formatTitreLong(dateISO)}</strong>
+                      <span className="mute" style={{ marginLeft: 10, fontSize: 12 }}>
+                        {events.length} événement{events.length > 1 ? "s" : ""}
+                      </span>
+                    </span>
+                    <span className={`badge ${STATUT_BADGE[r.statut] || "badge-mute"}`}>
+                      {r.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
 
-            {detail.statut_jour === "present" && (
-              <>
-                {(detail.evenements || []).length === 0 && (
-                  <p className="mute" style={{ margin: 0 }}>
-                    Présence enregistrée, détail des pointages indisponible.
-                  </p>
-                )}
-                {(detail.evenements || []).length > 0 && (
-                  <div className="parcours-timeline">
-                    {detail.evenements.map((ev, i) => (
-                      <div
-                        key={`${ev.type}-${ev.heure || i}`}
-                        className={`parcours-item tone-border-${
-                          ev.type === "entree"
-                            ? "green"
-                            : ev.type === "sortie"
-                              ? "blue"
-                              : "mute"
-                        }`}
-                      >
-                        <div className="parcours-icon">
-                          {ev.type === "entree"
-                            ? "→"
-                            : ev.type === "sortie"
-                              ? "←"
-                              : "•"}
-                        </div>
-                        <div className="parcours-body">
-                          <div className="parcours-label">{ev.label}</div>
-                          <div className="parcours-meta mono">
-                            {ev.heure ? formatHeure(ev.heure) : ""}
-                            {ev.duree_minutes != null
-                              ? ` · ${formatDuree(ev.duree_minutes)}`
-                              : ""}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+      {/* Détail d'un jour du parcours */}
+      {vue === "jour-detail" && selectedEmp && jourDetail && (
+        <section className="panel">
+          <div className="panel-header">
+            <h2>
+              {selectedEmp.nom} — {formatTitreLong(jourDetail)}
+            </h2>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => {
+                setVue("parcours");
+                setJourDetail(null);
+              }}
+            >
+              <Icon name="x" size={13} /> Retour au parcours
+            </button>
+          </div>
+          <div className="panel-body">
+            <div className="parcours-timeline">
+              {(joursParcours.find(([d]) => d === jourDetail)?.[1] || []).map((ev, i) => (
+                <div
+                  key={`${ev.type}-${ev.heure || i}`}
+                  className={`parcours-item tone-border-${
+                    ev.type === "entree"
+                      ? "green"
+                      : ev.type === "sortie"
+                        ? "blue"
+                        : ev.type === "absence"
+                          ? "red"
+                          : "mute"
+                  }`}
+                >
+                  <div className="parcours-icon">
+                    {ev.type === "entree" ? "→" : ev.type === "sortie" ? "←" : "•"}
                   </div>
-                )}
-              </>
-            )}
+                  <div className="parcours-body">
+                    <div className="parcours-label">{ev.label}</div>
+                    {ev.detail && (
+                      <div className="parcours-meta" style={{ marginTop: 2 }}>
+                        {ev.detail}
+                      </div>
+                    )}
+                    <div className="parcours-meta mono">
+                      {ev.heure ? formatHeure(ev.heure) : ""}
+                      {ev.duree_minutes != null ? ` · ${formatDuree(ev.duree_minutes)}` : ""}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
       )}
@@ -2756,7 +2699,7 @@ export default function PresencesPanel() {
                 )}
 
                 <div className="presence-card-row">
-                  <span className="mute">Carte</span>
+                  <span className="mute">{uid ? "Carte" : "Matricule"}</span>
                   <span className="mono dim">{uid || e.matricule /* fallback */ || "—"}</span>
                 </div>
 

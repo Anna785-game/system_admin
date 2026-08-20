@@ -6,7 +6,7 @@ const NAV = [
   { id: "candidats", label: "Candidats", icon: "users" },
   { id: "employes", label: "Employés", icon: "idCard" },
   { id: "historique", label: "Historique", icon: "history" },
-  { id: "postes", label: "Postes & roue", icon: "dial" },
+  { id: "postes", label: "Postes", icon: "dial" },
   { id: "cartes", label: "Cartes RFID", icon: "cardId" },
   { id: "presences", label: "Présence live", icon: "clock" },
   { id: "simulation", label: "Simulation 7j", icon: "briefcase" },

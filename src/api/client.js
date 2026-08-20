@@ -89,8 +89,10 @@ export const api = {
     }),
 
   // ---- historique journalier ------------------------------------------
-  historiqueJour: (dateISO) =>
-    request(`/historique/jour?date=${encodeURIComponent(dateISO)}`),
+  historiqueJour: (dateISO, source = "normal") =>
+    request(
+      `/historique/jour?date=${encodeURIComponent(dateISO)}&source=${encodeURIComponent(source)}`
+    ),
 
   // ---- virer un employé (depuis le panneau Employés) -------------------
   virerEmploye: (id) =>

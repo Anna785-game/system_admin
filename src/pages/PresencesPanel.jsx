@@ -195,7 +195,7 @@ export default function PresencesPanel() {
                 )}
 
                 <div className="presence-card-row">
-                  <span className="mute">Carte</span>
+                  <span className="mute">{uid ? "Carte" : "Matricule"}</span>
                   <span className="mono dim">{uid || e.matricule /* fallback */ || "—"}</span>
                 </div>
 
