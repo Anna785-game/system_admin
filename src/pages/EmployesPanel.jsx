@@ -1,6 +1,13 @@
 /**
- * Employés — liste + recherche + drawer détail avec timeline + graphique
- * des durées de travail.
+ * Employés — liste simple (actifs / inactifs), sans drawer de parcours.
+ * Le détail journalier (entrées / sorties / absences) vit désormais dans
+ * Historique, filtré par date.
+ *
+ * Actions :
+ *  - Virer  → status Inactif, carte détachée, biometrie nettoyée, marque
+ *             "viré" pour aujourd'hui (reste visible dans Historique ce jour-là
+ *             puis disparaît des jours suivants).
+ *  - Supprimer → suppression définitive (hard delete).
  */
 
 import { useMemo, useState } from "react";
@@ -8,20 +15,6 @@ import { api } from "../api/client";
 import { useResource } from "../hooks/useResource";
 import { useToast } from "../context/ToastContext";
 import Icon from "../components/Icon";
-
-function formatDuree(min) {
-  if (min === null || min === undefined) return "—";
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  if (h === 0) return `${m} min`;
-  return `${h}h${String(m).padStart(2, "0")}`;
-}
-
-function formatDate(iso) {
-  if (!iso) return "—";
-  const d = new Date(iso + (iso.length === 10 ? "T12:00:00" : ""));
-  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
-}
 
 async function fetchList() {
   const [employes, postes] = await Promise.all([
@@ -31,183 +24,19 @@ async function fetchList() {
   return { employes, postes };
 }
 
-// ---------- Mini graphique barres (CSS pur) ----------
-function DureeBars({ durees }) {
-  if (!durees || durees.length === 0) {
-    return (
-      <div className="empty" style={{ padding: "12px 0" }}>
-        Aucune durée enregistrée pour le moment.
-      </div>
-    );
-  }
-  // Prend les 14 derniers jours max, triés chrono
-  const sorted = [...durees]
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(-14);
-  const max = Math.max(...sorted.map((d) => d.duree_minutes), 1);
-
-  return (
-    <div className="duree-bars">
-      {sorted.map((d) => {
-        const pct = Math.round((d.duree_minutes / max) * 100);
-        return (
-          <div key={d.date} className="duree-bar-col" title={`${d.date} · ${formatDuree(d.duree_minutes)}`}>
-            <div className="duree-bar-track">
-              <div
-                className="duree-bar-fill"
-                style={{ height: `${pct}%` }}
-              />
-            </div>
-            <div className="duree-bar-label mono">
-              {d.date.slice(8)}/{d.date.slice(5, 7)}
-            </div>
-            <div className="duree-bar-val mono dim">{formatDuree(d.duree_minutes)}</div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ---------- Timeline ----------
-function Timeline({ events }) {
-  if (!events || events.length === 0) {
-    return (
-      <div className="empty" style={{ padding: "12px 0" }}>
-        Aucun événement de pointage pour cet employé.
-      </div>
-    );
-  }
-
-  const tone = {
-    entree: "green",
-    sortie: "blue",
-    absence: "red",
-    presence_jour: "mute",
-  };
-
-  const icon = {
-    entree: "→",
-    sortie: "←",
-    absence: "✕",
-    presence_jour: "•",
-  };
-
-  return (
-    <div className="parcours-timeline">
-      {events.map((ev, i) => (
-        <div
-          key={`${ev.type}-${ev.date}-${ev.heure || i}`}
-          className={`parcours-item tone-border-${tone[ev.type] || "mute"}`}
-        >
-          <div className="parcours-icon">{icon[ev.type] || "•"}</div>
-          <div className="parcours-body">
-            <div className="parcours-label">{ev.label}</div>
-            <div className="parcours-meta mono">
-              {formatDate(ev.date)}
-              {ev.heure ? ` · ${ev.heure.slice(0, 5)}` : ""}
-              {ev.detail ? ` · ${ev.detail}` : ""}
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ---------- Drawer détail ----------
-function EmployeDrawer({ employeId, postes, onClose }) {
-  const { data, loading, error } = useResource(
-    () => api.parcoursEmploye(employeId),
-    { deps: [employeId], refreshOn: ["entree_entreprise", "sortie_entreprise"] }
-  );
-
-  const posteNom = data?.id_poste
-    ? postes.find((p) => p.id === data.id_poste)?.type_poste || `#${data.id_poste}`
-    : null;
-
-  return (
-    <div className="drawer-overlay" onClick={onClose}>
-      <div className="drawer" onClick={(e) => e.stopPropagation()}>
-        <div className="drawer-header">
-          <div>
-            <div className="eyebrow">Parcours</div>
-            <h2>
-              {loading ? "…" : `${data?.nom || ""} ${data?.prenom || ""}`.trim() || `#${employeId}`}
-            </h2>
-          </div>
-          <button className="btn btn-ghost btn-sm" onClick={onClose}>
-            <Icon name="x" size={14} />
-          </button>
-        </div>
-
-        <div className="drawer-body">
-          {loading && <div className="empty">Chargement du parcours…</div>}
-          {error && <div className="empty">{error}</div>}
-          {data && (
-            <>
-              <div className="drawer-meta">
-                <div>
-                  <span className="mute">Matricule</span>
-                  <div className="mono">{data.matricule}</div>
-                </div>
-                <div>
-                  <span className="mute">Statut</span>
-                  <div>
-                    <span
-                      className={`badge ${
-                        data.status === "Actif" ? "badge-green" : "badge-red"
-                      }`}
-                    >
-                      {data.status}
-                    </span>
-                    {data.is_present && (
-                      <span className="badge badge-green" style={{ marginLeft: 6 }}>
-                        Présent
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <span className="mute">Poste</span>
-                  <div>{posteNom || <span className="mute">—</span>}</div>
-                </div>
-              </div>
-
-              <section style={{ marginTop: 28 }}>
-                <h3 style={{ marginBottom: 12, fontSize: 14 }}>Durée de travail (jours)</h3>
-                <DureeBars durees={data.durees_par_jour} />
-              </section>
-
-              <section style={{ marginTop: 28 }}>
-                <h3 style={{ marginBottom: 12, fontSize: 14 }}>
-                  Timeline ({data.timeline.length})
-                </h3>
-                <Timeline events={data.timeline} />
-              </section>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------- Page principale ----------
 export default function EmployesPanel() {
   const toast = useToast();
   const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState(null);
+  const [filtreStatut, setFiltreStatut] = useState("Actif"); // Actif | Inactif | tous
   const [busy, setBusy] = useState(null);
 
   const { data, loading, error, reload } = useResource(fetchList, {
     refreshOn: [
       "employe_actif",
-      "roulette",
+      "poste_choisi",
       "vire_manuel",
-      "entree_entreprise",
-      "sortie_entreprise",
       "simulation_end",
+      "carte_assignee",
     ],
   });
 
@@ -220,19 +49,48 @@ export default function EmployesPanel() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return employes;
     return employes.filter((e) => {
+      if (filtreStatut !== "tous" && (e.status || "Actif") !== filtreStatut) {
+        return false;
+      }
+      if (!q) return true;
       const nom = `${e.nom || ""} ${e.prenom || ""}`.toLowerCase();
       return (
-        nom.includes(q) ||
-        String(e.id).includes(q) ||
-        (e.matricule || "").toLowerCase().includes(q)
+        nom.includes(q) || (e.matricule || "").toLowerCase().includes(q)
       );
     });
-  }, [employes, search]);
+  }, [employes, search, filtreStatut]);
+
+  async function virer(e) {
+    const nom = `${e.nom || ""} ${e.prenom || ""}`.trim() || e.matricule;
+    if (
+      !window.confirm(
+        `Virer ${nom} ?\nIl passera Inactif aujourd'hui, disparaîtra de la liste active, et restera visible dans Historique uniquement pour les jours où il a travaillé (ou le jour du licenciement).`
+      )
+    ) {
+      return;
+    }
+    setBusy(e.id);
+    try {
+      await api.virerEmploye(e.id);
+      toast.success(`${nom} a été viré.`);
+      reload();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function supprimer(e) {
-    if (!window.confirm(`Supprimer ${e.nom} (${e.matricule}) ?`)) return;
+    const nom = `${e.nom || ""} ${e.prenom || ""}`.trim() || e.matricule;
+    if (
+      !window.confirm(
+        `Supprimer définitivement ${nom} ?\nToutes ses données (présences, absences) seront perdues. Préférez « Virer » pour conserver l'historique.`
+      )
+    ) {
+      return;
+    }
     setBusy(e.id);
     try {
       await api.supprimerEmploye(e.id);
@@ -245,6 +103,8 @@ export default function EmployesPanel() {
     }
   }
 
+  const nbActifs = employes.filter((e) => e.status === "Actif").length;
+
   return (
     <div className="page">
       <div className="page-header">
@@ -252,13 +112,34 @@ export default function EmployesPanel() {
           <div className="eyebrow">Effectif</div>
           <h1>Employés</h1>
         </div>
-        <div className="field" style={{ width: 260 }}>
+        <span className={`badge ${nbActifs > 0 ? "badge-green" : "badge-mute"}`}>
+          {nbActifs} actif{nbActifs !== 1 ? "s" : ""}
+        </span>
+      </div>
+
+      <div
+        className="flex gap-8"
+        style={{ marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}
+      >
+        <div className="field" style={{ width: 240, margin: 0 }}>
           <input
             type="search"
-            placeholder="Rechercher nom, matricule, #id…"
+            placeholder="Rechercher nom, matricule…"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(ev) => setSearch(ev.target.value)}
           />
+        </div>
+        <div className="flex gap-8" style={{ alignItems: "center" }}>
+          {["Actif", "Inactif", "tous"].map((s) => (
+            <button
+              key={s}
+              type="button"
+              className={`btn btn-sm ${filtreStatut === s ? "btn-primary" : "btn-ghost"}`}
+              onClick={() => setFiltreStatut(s)}
+            >
+              {s === "tous" ? "Tous" : s}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -275,8 +156,8 @@ export default function EmployesPanel() {
           {!loading && filtered.length === 0 && (
             <div className="empty">
               <strong>Aucun employé</strong>
-              {search
-                ? "Aucun résultat pour cette recherche."
+              {search || filtreStatut !== "tous"
+                ? "Aucun résultat pour ce filtre."
                 : "Les employés apparaissent après acceptation d'un candidat."}
             </div>
           )}
@@ -294,21 +175,16 @@ export default function EmployesPanel() {
                 </thead>
                 <tbody>
                   {filtered.map((e) => (
-                    <tr
-                      key={e.id}
-                      style={{ cursor: "pointer" }}
-                      onClick={() => setSelectedId(e.id)}
-                    >
+                    <tr key={e.id}>
                       <td>
                         <strong>
                           {e.nom} {e.prenom || ""}
-                        </strong>{" "}
-                        <span className="mono dim">#{e.id}</span>
+                        </strong>
                       </td>
                       <td className="mono">{e.matricule}</td>
                       <td>
                         {e.id_poste ? (
-                          posteMap[e.id_poste] || `#${e.id_poste}`
+                          posteMap[e.id_poste] || "—"
                         ) : (
                           <span className="mute">—</span>
                         )}
@@ -322,19 +198,27 @@ export default function EmployesPanel() {
                           {e.status || "—"}
                         </span>
                       </td>
-                      <td style={{ textAlign: "right" }} onClick={(ev) => ev.stopPropagation()}>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => setSelectedId(e.id)}
-                          title="Voir le parcours"
-                        >
-                          <Icon name="history" size={13} />
-                        </button>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        {e.status === "Actif" && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => virer(e)}
+                            disabled={busy === e.id}
+                            title="Virer (passe Inactif, garde l'historique)"
+                          >
+                            {busy === e.id ? (
+                              <span className="spinner" />
+                            ) : (
+                              <Icon name="logout" size={13} />
+                            )}
+                            Virer
+                          </button>
+                        )}
                         <button
                           className="btn btn-ghost btn-sm"
                           onClick={() => supprimer(e)}
                           disabled={busy === e.id}
-                          title="Supprimer"
+                          title="Supprimer définitivement"
                         >
                           {busy === e.id ? (
                             <span className="spinner" />
@@ -352,13 +236,10 @@ export default function EmployesPanel() {
         </div>
       </section>
 
-      {selectedId && (
-        <EmployeDrawer
-          employeId={selectedId}
-          postes={postes}
-          onClose={() => setSelectedId(null)}
-        />
-      )}
+      <p className="mute" style={{ fontSize: 12.5, marginTop: 12 }}>
+        Le détail des pointages (entrées, sorties, absences) se consulte dans{" "}
+        <strong>Historique</strong>, jour par jour.
+      </p>
     </div>
   );
 }

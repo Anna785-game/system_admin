@@ -33,11 +33,11 @@ const REGISTRY = {
     majeur: true,
     libelle: (d) => d.message || `${d.candidat?.nom || "Un employé"} a été viré.`,
   },
-  roulette: {
+  poste_choisi: {
     tone: "gold",
-    icon: "🎡",
+    icon: "🧭",
     majeur: true,
-    libelle: (d) => `Roue lancée pour ${d.candidat?.nom || "un candidat"}…`,
+    libelle: (d) => `${d.candidat?.nom || "Un candidat"} a choisi le poste de ${d.poste}.`,
   },
   employe_actif: {
     tone: "green",

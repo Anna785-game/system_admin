@@ -104,9 +104,9 @@ export function WsProvider({ children }) {
 
   const clearEvents = useCallback(() => setEvents([]), []);
 
-  // Permet d'injecter un événement factice (bouton "Tester" côté Réglages)
-  // sans dépendre du backend — pratique pour répéter l'effet roulette avant
-  // l'ouverture de l'expo.
+  // Permet d'injecter un événement factice sans dépendre du backend —
+  // gardé comme utilitaire de test générique même si le bouton dédié à la
+  // roulette a été retiré du panneau Réglages.
   const simulateEvent = useCallback((payload) => {
     const withMeta = { ...payload, _id: ++idCounter, _ts: Date.now() };
     setEvents((prev) => {

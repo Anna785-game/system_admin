@@ -1,24 +1,4 @@
-import { useEffect, useState } from "react";
-import Icon from "./Icon";
-import { useWs } from "../context/WsContext";
-import { api } from "../api/client";
 
-const STATUS_LABEL = {
-  idle: ["En attente", "mute"],
-  connecting: ["Connexion…", "yellow"],
-  open: ["En direct", "green"],
-  closed: ["Coupé — reconnexion…", "red"],
-  error: ["Erreur", "red"],
-};
-
-function useClock() {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
-  return now;
-}
 
 export default function Topbar() {
   const { status } = useWs();
@@ -30,11 +10,15 @@ export default function Topbar() {
     try {
       const s = await api.statsCandidats();
       setStats(s);
-    } catch { /* silencieux sur le bandeau, pas critique */ }
+    } catch {
+      /* silencieux sur le bandeau, pas critique */
+    }
     try {
       const emp = await api.listeEmployes();
       setEmployesActifs(emp.filter((e) => e.status === "Actif").length);
-    } catch { /* idem */ }
+    } catch {
+      /* idem */
+    }
   }
 
   useEffect(() => {
@@ -44,10 +28,23 @@ export default function Topbar() {
   }, []);
 
   const { subscribe } = useWs();
-  useEffect(() => subscribe(
-    ["inscription", "candidat_actif", "retrait", "vire_manuel", "employe_actif", "roulette", "carte_assignee", "simulation_end"],
-    refresh,
-  ), [subscribe]);
+  useEffect(
+    () =>
+      subscribe(
+        [
+          "inscription",
+          "candidat_actif",
+          "retrait",
+          "vire_manuel",
+          "employe_actif",
+          "poste_choisi",
+          "carte_assignee",
+          "simulation_end",
+        ],
+        refresh
+      ),
+    [subscribe]
+  );
 
   const [label, tone] = STATUS_LABEL[status] || STATUS_LABEL.idle;
 
@@ -59,9 +56,34 @@ export default function Topbar() {
         <StatTile label="Employés actifs" value={employesActifs} tone="green" />
       </div>
 
+      <a
+        href="https://cartepresence.vercel.app/"
+        target="_blank"
+        rel="noreferrer"
+        className="mono"
+        style={{
+          fontSize: 12,
+          color: "var(--text-dim)",
+          textDecoration: "none",
+          marginRight: 12,
+          whiteSpace: "nowrap",
+        }}
+        title="Site candidat (téléphone)"
+      >
+        cartepresence.vercel.app ↗
+      </a>
+
       <div className="topbar-clock mono">
         {now.toLocaleTimeString("fr-FR")}
-        <span className="dim"> · {now.toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "short" })}</span>
+        <span className="dim">
+          {" "}
+          ·{" "}
+          {now.toLocaleDateString("fr-FR", {
+            weekday: "short",
+            day: "2-digit",
+            month: "short",
+          })}
+        </span>
       </div>
 
       <div className={`topbar-ws badge badge-${tone}`}>

@@ -80,6 +80,21 @@ export const api = {
   listeCartes: () => request("/cartes"),
   creerCarte: (payload) => request("/cartes", { method: "POST", body: payload }),
   supprimerCarte: (id) => request(`/cartes/${id}`, { method: "DELETE" }),
+  listeCartesEnAttente: () => request("/cartes/en-attente"),
+  listeCartesDisponibles: () => request("/cartes/disponibles"),
+  attribuerCarte: (employeId, carterfidId) =>
+    request("/cartes/attribuer", {
+      method: "POST",
+      body: { employe_id: employeId, carterfid_id: carterfidId },
+    }),
+
+  // ---- historique journalier ------------------------------------------
+  historiqueJour: (dateISO) =>
+    request(`/historique/jour?date=${encodeURIComponent(dateISO)}`),
+
+  // ---- virer un employé (depuis le panneau Employés) -------------------
+  virerEmploye: (id) =>
+    request(`/employes/${id}/virer`, { method: "POST" }),
 
   // ---- présences / absences -----------------------------------------
   listePresences: (params = {}) => {

@@ -1,0 +1,3049 @@
+PROJECT DUMP
+================================================================================
+Projet : sys_admin
+Généré le : 2026-08-20 15:50:28
+Fichiers inclus : 26
+================================================================================
+
+ARBORESCENCE
+--------------------------------------------------------------------------------
+sys_admin/
+├── public/
+│   ├── favicon.svg
+│   ├── icons.svg
+│   └── roulette.png
+├── src/
+│   ├── api/
+│   │   └── client.js
+│   ├── assets/
+│   │   ├── hero.png
+│   │   ├── react.svg
+│   │   └── vite.svg
+│   ├── components/
+│   │   ├── Icon.jsx
+│   │   ├── LiveFeed.jsx
+│   │   ├── RouletteOverlay.jsx
+│   │   ├── Sidebar.jsx
+│   │   └── Topbar.jsx
+│   ├── constants/
+│   │   ├── events.js
+│   │   └── postes.js
+│   ├── context/
+│   │   ├── AuthContext.jsx
+│   │   ├── ToastContext.jsx
+│   │   └── WsContext.jsx
+│   ├── hooks/
+│   │   └── useResource.js
+│   ├── pages/
+│   │   ├── CandidatsPanel.jsx
+│   │   ├── CartesPanel.jsx
+│   │   ├── Dashboard.jsx
+│   │   ├── EmployesPanel.jsx
+│   │   ├── HistoriquePanel.jsx
+│   │   ├── LivePage.jsx
+│   │   ├── Login.jsx
+│   │   ├── PostesPanel.jsx
+│   │   ├── PresencesPanel.jsx
+│   │   ├── ReglagesPanel.jsx
+│   │   └── SimulationPanel.jsx
+│   ├── styles/
+│   │   ├── global.css
+│   │   └── tokens.css
+│   ├── App.css
+│   ├── App.jsx
+│   ├── index.css
+│   └── main.jsx
+├── .oxlintrc.json
+├── index.html
+├── v.txt
+├── v3.txt
+└── vite.config.js
+
+CONTENU DES FICHIERS
+================================================================================
+
+# src/api/client.js
+--------------------------------------------------------------------------------
+// Client REST pour l'API FastAPI (fastapi_pointage, voir v.txt).
+// Toutes les routes protégées attendent un JWT Supabase dans
+// `Authorization: Bearer <token>`, posé par AuthContext.
+
+export const API_BASE = import.meta.env.VITE_API_BASE || "https://presence-1s80.onrender.com";
+
+let getToken = () => null;
+// Injecté par AuthContext au démarrage pour que le client puisse toujours
+// lire le token courant sans dépendre d'un import circulaire.
+export function bindTokenGetter(fn) {
+  getToken = fn;
+}
+
+class ApiError extends Error {
+  constructor(message, status, detail) {
+    super(message);
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+async function request(path, { method = "GET", body, headers, isForm = false } = {}) {
+  const token = getToken();
+  const finalHeaders = { ...(headers || {}) };
+  if (!isForm) finalHeaders["Content-Type"] = "application/json";
+  if (token) finalHeaders["Authorization"] = `Bearer ${token}`;
+
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers: finalHeaders,
+      body: body ? (isForm ? body : JSON.stringify(body)) : undefined,
+    });
+  } catch (e) {
+    throw new ApiError("Impossible de joindre le serveur API.", 0, null);
+  }
+
+  let data = null;
+  const text = await res.text();
+  if (text) {
+    try { data = JSON.parse(text); } catch { data = text; }
+  }
+
+  if (!res.ok) {
+    const detail = (data && data.detail) || `Erreur ${res.status}`;
+    throw new ApiError(typeof detail === "string" ? detail : JSON.stringify(detail), res.status, data);
+  }
+  return data;
+}
+
+export const api = {
+  // ---- auth --------------------------------------------------------
+  login: (email, password) => request("/auth/login", { method: "POST", body: { email, password } }),
+
+  // ---- candidats -----------------------------------------------------
+  listeCandidats: () => request("/candidats"),
+  historiqueCandidats: () => request("/candidats/historique"),
+  statsCandidats: () => request("/candidats/stats"),
+  accepterCandidat: (id) => request(`/candidats/${id}/accepter`, { method: "POST" }),
+  retirerCandidat: (id) => request(`/candidats/${id}/retirer`, { method: "POST" }),
+  virerCandidat: (id) => request(`/candidats/${id}/virer`, { method: "POST" }),
+  supprimerCandidat: (id) => request(`/candidats/${id}`, { method: "DELETE" }),
+  viderAttente: () => request("/candidats/vider-attente", { method: "POST" }),
+  supprimerToutAttente: () => request("/candidats/attente/tout", { method: "DELETE" }),
+
+  // ---- employés --------------------------------------------------------
+  listeEmployes: () => request("/employes"),
+  getEmploye: (id) => request(`/employes/${id}`),
+  updateEmploye: (id, payload) => request(`/employes/${id}`, { method: "PATCH", body: payload }),
+  supprimerEmploye: (id) => request(`/employes/${id}`, { method: "DELETE" }),
+
+  // ---- postes --------------------------------------------------------
+  listePostes: () => request("/postes"),
+  creerPoste: (payload) => request("/postes", { method: "POST", body: payload }),
+  supprimerPoste: (id) => request(`/postes/${id}`, { method: "DELETE" }),
+  seedPostesDemo: () => request("/postes/seed-demo", { method: "POST" }),
+
+  // ---- cartes RFID --------------------------------------------------
+  listeCartes: () => request("/cartes"),
+  creerCarte: (payload) => request("/cartes", { method: "POST", body: payload }),
+  supprimerCarte: (id) => request(`/cartes/${id}`, { method: "DELETE" }),
+  listeCartesEnAttente: () => request("/cartes/en-attente"),
+  listeCartesDisponibles: () => request("/cartes/disponibles"),
+  attribuerCarte: (employeId, carterfidId) =>
+    request("/cartes/attribuer", {
+      method: "POST",
+      body: { employe_id: employeId, carterfid_id: carterfidId },
+    }),
+
+  // ---- historique journalier ------------------------------------------
+  historiqueJour: (dateISO) =>
+    request(`/historique/jour?date=${encodeURIComponent(dateISO)}`),
+
+  // ---- virer un employé (depuis le panneau Employés) -------------------
+  virerEmploye: (id) =>
+    request(`/employes/${id}/virer`, { method: "POST" }),
+
+  // ---- présences / absences -----------------------------------------
+  listePresences: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/presences${qs ? `?${qs}` : ""}`);
+  },
+  listeAbsences: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/absences${qs ? `?${qs}` : ""}`);
+  },
+
+  // ---- jobs planifiés --------------------------------------------------
+  jobCalculDuree: () => request("/jobs/calcul-duree-travail", { method: "POST" }),
+  jobInsertAbsences: () => request("/jobs/insert-absences", { method: "POST" }),
+
+  // ---- pointage / badge -----------------------------------------------
+  scanSimulation: (uidcarte) => request("/api/scan-simulation", { method: "POST", body: { uidcarte } }),
+  entreeManuelle: (uidcarte) => request("/api/entree", { method: "POST", body: { uidcarte } }),
+
+  // ---- simulation 7 jours ---------------------------------------------
+  demarrerSimulation: (candidatId) => request(`/simulation/start/${candidatId}`, { method: "POST" }),
+
+  // ---- biométrie ---------------------------------------------------
+  supprimerVisage: (employeId) => request(`/api/biometrie/${employeId}`, { method: "DELETE" }),
+  
+    // ---- présence live -------------------------------------------------
+  listePresentsLive: () => request("/presences/live"),
+  forceSortie: (employeId) =>
+    request(`/presences/force-sortie/${employeId}`, { method: "POST" }),
+
+  // ---- parcours employé ----------------------------------------------
+  parcoursEmploye: (id) => request(`/employes/${id}/parcours`),
+};
+
+export { ApiError };
+
+================================================================================
+
+# src/App.jsx
+--------------------------------------------------------------------------------
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import { WsProvider } from "./context/WsContext";
+import { ToastProvider } from "./context/ToastContext";
+import Login from "./pages/Login";
+import Dashboard from "./pages/Dashboard";
+
+function Gate() {
+  const { isAuthenticated } = useAuth();
+  if (!isAuthenticated) return <Login />;
+  return (
+    <WsProvider>
+      <Dashboard />
+    </WsProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <ToastProvider>
+      <AuthProvider>
+        <Gate />
+      </AuthProvider>
+    </ToastProvider>
+  );
+}
+
+================================================================================
+
+# src/components/Icon.jsx
+--------------------------------------------------------------------------------
+const PATHS = {
+  radio: "M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8",
+  radioDot: "M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0",
+  users: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75",
+  idCard: "M2 5h20v14H2z M6 15c.5-2 2-3 4-3s3.5 1 4 3 M8 8h.01",
+  history: "M3 12a9 9 0 1 0 3-6.7 M3 5v5h5 M12 7v5l4 2",
+  dial: "M12 2v3 M12 19v3 M4.2 4.2l2.1 2.1 M17.7 17.7l2.1 2.1 M2 12h3 M19 12h3 M4.2 19.8l2.1-2.1 M17.7 6.3l2.1-2.1 M12 12l4-2",
+  briefcase: "M3 7h18v13H3z M8 7V4h8v3 M3 13h18",
+  cardId: "M3 4h18v16H3z M7 9h4 M7 13h6 M15 9h2",
+  clock: "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0 M12 7v5l3 2",
+  settings: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z",
+  logout: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4 M16 17l5-5-5-5 M21 12H9",
+  plus: "M12 5v14M5 12h14",
+  trash: "M3 6h18 M8 6V4h8v2 M6 6l1 14h10l1-14 M10 11v6 M14 11v6",
+  check: "M20 6L9 17l-5-5",
+  x: "M18 6 6 18M6 6l12 12",
+  bolt: "M13 2 3 14h7l-1 8 11-14h-7l1-6z",
+  wifi: "M2 8.5a16 16 0 0 1 20 0 M5.5 12a11 11 0 0 1 13 0 M9 15.5a6 6 0 0 1 6 0 M12 19h.01",
+  refresh: "M21 2v6h-6 M3 22v-6h6 M3.5 9a9 9 0 0 1 15.5-4.5L21 8 M20.5 15a9 9 0 0 1-15.5 4.5L3 16",
+};
+
+export default function Icon({ name, size = 16, strokeWidth = 1.8, className = "" }) {
+  const d = PATHS[name];
+  if (!d) return null;
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      {d.split(" M").map((seg, i) => (
+        <path key={i} d={i === 0 ? seg : `M${seg}`} />
+      ))}
+    </svg>
+  );
+}
+
+================================================================================
+
+# src/components/LiveFeed.jsx
+--------------------------------------------------------------------------------
+import { useWs } from "../context/WsContext";
+import { configEvenement, TONE_VARS } from "../constants/events";
+
+function formatHeure(ts) {
+  return new Date(ts).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+export function FeedTicker() {
+  const { events } = useWs();
+  const dernier = events[0];
+
+  return (
+    <div className="feedbar">
+      <div className="feedbar-inner">
+        {!dernier && <span className="mute mono">En attente d'événements…</span>}
+        {events.slice(0, 14).map((ev) => {
+          const cfg = configEvenement(ev.event);
+          const [bright] = TONE_VARS[cfg.tone] || TONE_VARS.mute;
+          return (
+            <span key={ev._id} className="feedbar-item">
+              <span className="feedbar-dot" style={{ background: bright }} />
+              <span className="mono feedbar-time">{formatHeure(ev._ts)}</span>
+              <span>{cfg.icon} {cfg.libelle(ev)}</span>
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function FeedList({ limit = 100 }) {
+  const { events, clearEvents } = useWs();
+  const list = events.slice(0, limit);
+
+  if (list.length === 0) {
+    return (
+      <div className="empty">
+        <strong>Silence radio</strong>
+        Aucun événement reçu pour l'instant. Les actions des visiteurs apparaîtront ici en direct.
+      </div>
+    );
+  }
+
+  return (
+    <div className="feed-list">
+      <div className="feed-list-head">
+        <span className="mute mono">{list.length} événement{list.length > 1 ? "s" : ""}</span>
+        <button className="btn btn-ghost btn-sm" onClick={clearEvents}>Vider</button>
+      </div>
+      {list.map((ev, i) => {
+        const cfg = configEvenement(ev.event);
+        return (
+          <div key={ev._id} className={`feed-row tone-border-${cfg.tone} ${cfg.majeur ? "majeur" : ""} ${i === 0 ? "fresh" : ""}`}>
+            <div className="feed-row-icon">{cfg.icon}</div>
+            <div className="feed-row-body">
+              <div className="feed-row-text">{cfg.libelle(ev)}</div>
+              <div className="feed-row-meta mono">{ev.event} · {formatHeure(ev._ts)}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+================================================================================
+
+# src/components/RouletteOverlay.jsx
+--------------------------------------------------------------------------------
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useWs } from "../context/WsContext";
+import { posteInfo, segmentCenterAngle, toneHex } from "../constants/postes";
+
+const SPIN_DURATION_MS = 6800;
+const EXTRA_TURNS_DEG = 7200;
+const REVEAL_HOLD_MS = 7000;
+
+export default function RouletteOverlay() {
+  const { subscribe } = useWs();
+  const [round, setRound] = useState(null);
+  const [phase, setPhase] = useState("idle"); // idle | spinning | reveal
+  const rotationRef = useRef(0);
+  const [rotation, setRotation] = useState(0);
+  const [transitionEnabled, setTransitionEnabled] = useState(false);
+  const dismissTimer = useRef(null);
+  const revealTimer = useRef(null);
+
+  const launch = useCallback((data) => {
+    clearTimeout(dismissTimer.current);
+    clearTimeout(revealTimer.current);
+
+    const poste = data.poste_gagnant;
+    const center = segmentCenterAngle(poste);
+    const jitter = (Math.random() - 0.5) * 70;
+    const target = ((center + jitter) % 360 + 360) % 360;
+
+    const currentMod = ((rotationRef.current % 360) + 360) % 360;
+    const delta = ((target - currentMod) % 360 + 360) % 360;
+    const next = rotationRef.current + EXTRA_TURNS_DEG + delta;
+    rotationRef.current = next;
+
+    setRound({
+      candidatNom: data.candidat?.nom || "Le candidat",
+      poste,
+      repartition: data.repartition || [],
+    });
+
+    // 1. Afficher la roue SANS transition (position actuelle)
+    setTransitionEnabled(false);
+    setPhase("spinning");
+    setRotation(rotationRef.current - EXTRA_TURNS_DEG - delta); // forcer le frame de départ
+
+    // 2. Au frame suivant, activer la transition et aller à la cible
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setTransitionEnabled(true);
+        setRotation(next);
+      });
+    });
+
+    revealTimer.current = setTimeout(() => setPhase("reveal"), SPIN_DURATION_MS);
+    dismissTimer.current = setTimeout(() => setPhase("idle"), SPIN_DURATION_MS + REVEAL_HOLD_MS);
+  }, []);
+
+  useEffect(() => subscribe(["roulette"], launch), [subscribe, launch]);
+
+  useEffect(() => () => {
+    clearTimeout(dismissTimer.current);
+    clearTimeout(revealTimer.current);
+  }, []);
+
+  if (phase === "idle" || !round) return null;
+
+  const info = posteInfo(round.poste);
+  const hex = toneHex(info.tone);
+
+  return (
+    <div className="roulette-overlay" role="dialog" aria-label="Tirage du poste">
+      <button className="roulette-close" onClick={() => setPhase("idle")} aria-label="Fermer">✕</button>
+
+      <div className="roulette-heading">
+        <div className="eyebrow">Tirage en cours</div>
+        <h1 className="roulette-name">{round.candidatNom}</h1>
+      </div>
+
+      <div className="roulette-stage">
+        <div className="roulette-pointer" />
+        <div
+          className="roulette-wheel-wrap"
+          style={{
+            transform: `rotate(${rotation}deg)`,
+            transitionDuration: transitionEnabled ? `${SPIN_DURATION_MS}ms` : "0ms",
+          }}
+        >
+          <img src="/roulette.png" alt="Roue des postes" className="roulette-wheel-img" />
+        </div>
+        <div className="roulette-hub-glow" />
+      </div>
+
+      <div
+        className={`roulette-result ${phase === "reveal" ? "show" : ""}`}
+        style={{ "--tone": hex.solid, "--tone-bright": hex.bright }}
+      >
+        <div className="roulette-result-icon">{info.icon}</div>
+        <div className="eyebrow">Poste attribué</div>
+        <div className="roulette-result-poste">{info.poste}</div>
+        {phase === "reveal" && <Confetti tone={info.tone} />}
+      </div>
+
+      {round.repartition.length > 0 && (
+        <div className="roulette-odds">
+          {round.repartition.map((r) => (
+            <span key={r.poste} className="roulette-odds-item mono">
+              {r.poste} · {r.pourcentage}%
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Confetti({ tone }) {
+  const pieces = Array.from({ length: 26 });
+  const colors = { red: "var(--red-bright)", blue: "var(--blue-bright)", yellow: "var(--yellow-bright)", mute: "var(--gold-bright)" };
+  return (
+    <div className="confetti">
+      {pieces.map((_, i) => {
+        const angle = (360 / pieces.length) * i;
+        const dist = 90 + Math.random() * 70;
+        const delay = Math.random() * 0.15;
+        const size = 5 + Math.random() * 5;
+        const palette = [colors[tone] || colors.mute, "var(--gold-bright)", "var(--text)"];
+        return (
+          <span
+            key={i}
+            className="confetti-piece"
+            style={{
+              "--angle": `${angle}deg`,
+              "--dist": `${dist}px`,
+              "--delay": `${delay}s`,
+              width: size,
+              height: size * 0.4,
+              background: palette[i % palette.length],
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+================================================================================
+
+# src/components/Sidebar.jsx
+--------------------------------------------------------------------------------
+import Icon from "./Icon";
+import { useAuth } from "../context/AuthContext";
+
+const NAV = [
+  { id: "live", label: "Direct", icon: "radio" },
+  { id: "candidats", label: "Candidats", icon: "users" },
+  { id: "employes", label: "Employés", icon: "idCard" },
+  { id: "historique", label: "Historique", icon: "history" },
+  { id: "postes", label: "Postes & roue", icon: "dial" },
+  { id: "cartes", label: "Cartes RFID", icon: "cardId" },
+  { id: "presences", label: "Présence live", icon: "clock" },
+  { id: "simulation", label: "Simulation 7j", icon: "briefcase" },
+  { id: "reglages", label: "Réglages", icon: "settings" },
+];
+
+export default function Sidebar({ active, onChange }) {
+  const { session, logout } = useAuth();
+
+  return (
+    <nav className="sidebar">
+      <div className="sidebar-brand">
+        <div className="sidebar-brand-mark">
+          <svg width="26" height="26" viewBox="0 0 40 40" fill="none">
+            <circle cx="20" cy="20" r="18" stroke="var(--gold)" strokeWidth="2.4" />
+            <path d="M20 2 A18 18 0 0 1 35.6 11" stroke="var(--red)" strokeWidth="3.4" strokeLinecap="round" />
+            <path d="M35.6 29 A18 18 0 0 1 20 38" stroke="var(--yellow)" strokeWidth="3.4" strokeLinecap="round" />
+            <path d="M4.4 29 A18 18 0 0 1 4.4 11" stroke="var(--blue)" strokeWidth="3.4" strokeLinecap="round" />
+          </svg>
+        </div>
+        <div>
+          <div className="sidebar-brand-title">Régie</div>
+          <div className="sidebar-brand-sub">Pointage &amp; Sécurité</div>
+        </div>
+      </div>
+
+      <div className="sidebar-nav">
+        {NAV.map((item) => (
+          <button
+            key={item.id}
+            className={`nav-item ${active === item.id ? "active" : ""}`}
+            onClick={() => onChange(item.id)}
+          >
+            <Icon name={item.icon} size={17} />
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="sidebar-foot">
+        <div className="sidebar-user">
+          <div className="sidebar-user-dot" />
+          <div className="sidebar-user-email mono">{session?.email}</div>
+        </div>
+        <button className="btn btn-ghost btn-sm btn-block" onClick={logout}>
+          <Icon name="logout" size={14} />
+          Se déconnecter
+        </button>
+      </div>
+    </nav>
+  );
+}
+
+================================================================================
+
+# src/components/Topbar.jsx
+--------------------------------------------------------------------------------
+
+
+export default function Topbar() {
+  const { status } = useWs();
+  const now = useClock();
+  const [stats, setStats] = useState({ en_attente: null, deja_passes: null });
+  const [employesActifs, setEmployesActifs] = useState(null);
+
+  async function refresh() {
+    try {
+      const s = await api.statsCandidats();
+      setStats(s);
+    } catch {
+      /* silencieux sur le bandeau, pas critique */
+    }
+    try {
+      const emp = await api.listeEmployes();
+      setEmployesActifs(emp.filter((e) => e.status === "Actif").length);
+    } catch {
+      /* idem */
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 15000);
+    return () => clearInterval(t);
+  }, []);
+
+  const { subscribe } = useWs();
+  useEffect(
+    () =>
+      subscribe(
+        [
+          "inscription",
+          "candidat_actif",
+          "retrait",
+          "vire_manuel",
+          "employe_actif",
+          "poste_choisi",
+          "carte_assignee",
+          "simulation_end",
+        ],
+        refresh
+      ),
+    [subscribe]
+  );
+
+  const [label, tone] = STATUS_LABEL[status] || STATUS_LABEL.idle;
+
+  return (
+    <header className="topbar">
+      <div className="topbar-stats">
+        <StatTile label="File d'attente" value={stats.en_attente} tone="yellow" />
+        <StatTile label="Historique" value={stats.deja_passes} tone="mute" />
+        <StatTile label="Employés actifs" value={employesActifs} tone="green" />
+      </div>
+
+      <a
+        href="https://cartepresence.vercel.app/"
+        target="_blank"
+        rel="noreferrer"
+        className="mono"
+        style={{
+          fontSize: 12,
+          color: "var(--text-dim)",
+          textDecoration: "none",
+          marginRight: 12,
+          whiteSpace: "nowrap",
+        }}
+        title="Site candidat (téléphone)"
+      >
+        cartepresence.vercel.app ↗
+      </a>
+
+      <div className="topbar-clock mono">
+        {now.toLocaleTimeString("fr-FR")}
+        <span className="dim">
+          {" "}
+          ·{" "}
+          {now.toLocaleDateString("fr-FR", {
+            weekday: "short",
+            day: "2-digit",
+            month: "short",
+          })}
+        </span>
+      </div>
+
+      <div className={`topbar-ws badge badge-${tone}`}>
+        <Icon name="wifi" size={12} />
+        {label}
+      </div>
+    </header>
+  );
+}
+
+function StatTile({ label, value, tone }) {
+  return (
+    <div className={`stat-tile tone-${tone}`}>
+      <div className="stat-tile-value mono">{value === null ? "—" : value}</div>
+      <div className="stat-tile-label">{label}</div>
+    </div>
+  );
+}
+
+================================================================================
+
+# src/constants/events.js
+--------------------------------------------------------------------------------
+// Décrit chaque `event` broadcasté par app/core/ws_manager.py (voir v.txt)
+// pour l'affichage dans le fil d'actualité en direct.
+
+const DEFAULT = {
+  tone: "mute",
+  icon: "•",
+  majeur: false,
+  libelle: (d) => d.message || d.event || "Événement",
+};
+
+const REGISTRY = {
+  inscription: {
+    tone: "blue",
+    icon: "📝",
+    majeur: false,
+    libelle: (d) => `${d.candidat?.nom || "Un visiteur"} s'inscrit à l'accueil.`,
+  },
+  candidat_actif: {
+    tone: "yellow",
+    icon: "➡️",
+    majeur: true,
+    libelle: (d) => `${d.candidat?.nom || "Le candidat"} est appelé au poste d'enregistrement.`,
+  },
+  retrait: {
+    tone: "mute",
+    icon: "↩️",
+    majeur: false,
+    libelle: () => "Retrait du candidat en cours.",
+  },
+  vire_manuel: {
+    tone: "red",
+    icon: "🚫",
+    majeur: true,
+    libelle: (d) => d.message || `${d.candidat?.nom || "Un employé"} a été viré.`,
+  },
+  poste_choisi: {
+    tone: "gold",
+    icon: "🧭",
+    majeur: true,
+    libelle: (d) => `${d.candidat?.nom || "Un candidat"} a choisi le poste de ${d.poste}.`,
+  },
+  employe_actif: {
+    tone: "green",
+    icon: "🎉",
+    majeur: true,
+    libelle: (d) => d.message || `Nouvel employé : poste ${d.poste}.`,
+  },
+  carte_assignee: {
+    tone: "gold",
+    icon: "💳",
+    majeur: false,
+    libelle: (d) => d.message || `Carte ${d.carte_uid} assignée.`,
+  },
+  entree_entreprise: {
+    tone: "green",
+    icon: "🟢",
+    majeur: false,
+    libelle: (d) => d.message || `${d.nom} est entré.`,
+  },
+  sortie_entreprise: {
+    tone: "blue",
+    icon: "🔵",
+    majeur: false,
+    libelle: (d) => d.message || `${d.nom} est sorti.`,
+  },
+  acces_refuse: {
+    tone: "red",
+    icon: "⛔",
+    majeur: true,
+    libelle: (d) => d.message || `Accès refusé (${d.reason}).`,
+  },
+  simulation_start: {
+    tone: "yellow",
+    icon: "▶️",
+    majeur: true,
+    libelle: (d) => d.message || `Simulation démarrée pour ${d.candidat?.nom}.`,
+  },
+  simulation_day: {
+    tone: "blue",
+    icon: "📅",
+    majeur: false,
+    libelle: (d) => `J${d.jour} — ${d.candidat?.nom || "employé"} : ${d.description}`,
+  },
+  simulation_end: {
+    tone: "red",
+    icon: "🏁",
+    majeur: true,
+    libelle: (d) => d.message || `Simulation terminée (${d.raison}).`,
+  },
+};
+
+export function configEvenement(eventName) {
+  return REGISTRY[eventName] || DEFAULT;
+}
+
+export const TONE_VARS = {
+  red: ["var(--red-bright)", "var(--red-dim)"],
+  blue: ["var(--blue-bright)", "var(--blue-dim)"],
+  yellow: ["var(--yellow-bright)", "var(--yellow-dim)"],
+  green: ["var(--green-bright)", "var(--green-dim)"],
+  gold: ["var(--gold-bright)", "var(--gold-dim)"],
+  mute: ["var(--text-dim)", "rgba(255,255,255,0.04)"],
+};
+
+================================================================================
+
+# src/constants/postes.js
+--------------------------------------------------------------------------------
+// La roue (public/roulette.png) est divisée en 3 secteurs de 120°, mesurés
+// en degrés horaires depuis midi (0° = pointeur, en haut) :
+//   Bleu   :   0° -> 120°  (haut-droite)
+//   Jaune  : 120° -> 240°  (bas)
+//   Rouge  : 240° -> 360°  (haut-gauche)
+//
+// Table de correspondance métier <-> secteur, telle que définie pour l'expo :
+//   Rouge  -> Vendeur
+//   Bleu   -> Nettoyeur de toilettes
+//   Jaune  -> Boss
+//
+// Les noms ci-dessous doivent matcher EXACTEMENT `type_poste` en base
+// (voir POST /postes/seed-demo côté API).
+
+export const SEGMENTS = [
+  { poste: "Vendeur", tone: "red", start: 0, end: 120, icon: "🏪" },
+  { poste: "Nettoyeur de toilettes", tone: "blue", start: 240, end: 360, icon: "🚰" },
+  { poste: "Boss", tone: "yellow", start: 120, end: 240, icon: "👑" },
+];
+
+const TONE_HEX = {
+  red: { solid: "var(--red)", bright: "var(--red-bright)" },
+  blue: { solid: "var(--blue)", bright: "var(--blue-bright)" },
+  yellow: { solid: "var(--yellow)", bright: "var(--yellow-bright)" },
+};
+
+export function posteInfo(nomPoste) {
+  const seg = SEGMENTS.find((s) => s.poste === nomPoste);
+  if (!seg) {
+    return { poste: nomPoste || "Poste inconnu", tone: "mute", icon: "❔", start: 0, end: 0 };
+  }
+  return seg;
+}
+
+export function toneHex(tone) {
+  return TONE_HEX[tone] || { solid: "var(--text-mute)", bright: "var(--text-dim)" };
+}
+
+// Angle (0-360, horaire depuis le haut) du CENTRE du secteur d'un poste donné.
+export function segmentCenterAngle(nomPoste) {
+  const seg = posteInfo(nomPoste);
+  if (seg.start === seg.end) return 0;
+  const span = (seg.end - seg.start + 360) % 360 || 360;
+  return (seg.start + span / 2) % 360;
+}
+
+================================================================================
+
+# src/context/AuthContext.jsx
+--------------------------------------------------------------------------------
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { api, bindTokenGetter, ApiError } from "../api/client";
+
+const AuthContext = createContext(null);
+
+const STORAGE_KEY = "admin_session_v1";
+
+function loadStoredSession() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function AuthProvider({ children }) {
+  const [session, setSession] = useState(() => loadStoredSession());
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  // Le client API doit toujours pouvoir lire le token courant, y compris
+  // juste après un login (avant que le re-render ait propagé la prop).
+  useEffect(() => {
+    bindTokenGetter(() => session?.access_token || null);
+  }, [session]);
+
+  const login = useCallback(async (email, password) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.login(email, password);
+      const role = res.user?.user_metadata?.role || res.user?.role || "user";
+      if (role !== "admin") {
+        throw new ApiError(
+          "Ce compte n'a pas le rôle admin. Connecte-toi avec un compte administrateur.",
+          403,
+        );
+      }
+      const next = {
+        access_token: res.access_token,
+        refresh_token: res.refresh_token,
+        email: res.user?.email || email,
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      setSession(next);
+      return true;
+    } catch (e) {
+      setError(e.message || "Échec de connexion");
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const logout = useCallback(() => {
+    localStorage.removeItem(STORAGE_KEY);
+    setSession(null);
+  }, []);
+
+  const value = useMemo(
+    () => ({
+      session,
+      isAuthenticated: !!session?.access_token,
+      loading,
+      error,
+      login,
+      logout,
+    }),
+    [session, loading, error, login, logout],
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth doit être utilisé dans <AuthProvider>");
+  return ctx;
+}
+
+================================================================================
+
+# src/context/ToastContext.jsx
+--------------------------------------------------------------------------------
+import { createContext, useCallback, useContext, useRef, useState } from "react";
+
+const ToastContext = createContext(null);
+let idCounter = 0;
+
+export function ToastProvider({ children }) {
+  const [toasts, setToasts] = useState([]);
+  const timers = useRef({});
+
+  const dismiss = useCallback((id) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+    clearTimeout(timers.current[id]);
+    delete timers.current[id];
+  }, []);
+
+  const push = useCallback((type, message) => {
+    const id = ++idCounter;
+    setToasts((prev) => [...prev, { id, type, message }]);
+    timers.current[id] = setTimeout(() => dismiss(id), 4200);
+  }, [dismiss]);
+
+  const value = {
+    success: (m) => push("success", m),
+    error: (m) => push("error", m),
+    info: (m) => push("info", m),
+  };
+
+  return (
+    <ToastContext.Provider value={value}>
+      {children}
+      <div className="toast-host">
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast toast-${t.type}`} onClick={() => dismiss(t.id)}>
+            {t.message}
+          </div>
+        ))}
+      </div>
+    </ToastContext.Provider>
+  );
+}
+
+export function useToast() {
+  const ctx = useContext(ToastContext);
+  if (!ctx) throw new Error("useToast doit être utilisé dans <ToastProvider>");
+  return ctx;
+}
+
+================================================================================
+
+# src/context/WsContext.jsx
+--------------------------------------------------------------------------------
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { API_BASE } from "../api/client";
+
+const WsContext = createContext(null);
+
+const TOKEN_KEY = "admin_ws_token_v1";
+const MAX_EVENTS = 300;
+const RECONNECT_BASE_MS = 1500;
+const RECONNECT_MAX_MS = 15000;
+
+function wsUrl(token) {
+  const httpBase = API_BASE.replace(/\/+$/, "");
+  const wsBase = httpBase.replace(/^http/i, (m) => (m.toLowerCase() === "https" ? "wss" : "ws"));
+  return `${wsBase}/ws/admin?token=${encodeURIComponent(token)}`;
+}
+
+let idCounter = 0;
+
+export function WsProvider({ children }) {
+  const [token, setTokenState] = useState(
+    () => localStorage.getItem(TOKEN_KEY) || import.meta.env.VITE_ADMIN_WS_TOKEN || "",
+  );
+  const [status, setStatus] = useState("idle"); // idle | connecting | open | closed | error
+  const [events, setEvents] = useState([]);
+
+  const socketRef = useRef(null);
+  const reconnectAttempt = useRef(0);
+  const reconnectTimer = useRef(null);
+  const listeners = useRef(new Set());
+  const closedByUser = useRef(false);
+
+  const setToken = useCallback((next) => {
+    localStorage.setItem(TOKEN_KEY, next);
+    setTokenState(next);
+  }, []);
+
+  const subscribe = useCallback((eventNames, callback) => {
+    const names = Array.isArray(eventNames) ? eventNames : [eventNames];
+    const entry = { names, callback };
+    listeners.current.add(entry);
+    return () => listeners.current.delete(entry);
+  }, []);
+
+  const connect = useCallback(() => {
+    if (!token) {
+      setStatus("idle");
+      return;
+    }
+    closedByUser.current = false;
+    setStatus("connecting");
+    const socket = new WebSocket(wsUrl(token));
+    socketRef.current = socket;
+
+    socket.onopen = () => {
+      reconnectAttempt.current = 0;
+      setStatus("open");
+    };
+
+    socket.onmessage = (msg) => {
+      let payload;
+      try {
+        payload = JSON.parse(msg.data);
+      } catch {
+        return;
+      }
+      const withMeta = { ...payload, _id: ++idCounter, _ts: Date.now() };
+      setEvents((prev) => {
+        const next = [withMeta, ...prev];
+        return next.length > MAX_EVENTS ? next.slice(0, MAX_EVENTS) : next;
+      });
+      listeners.current.forEach(({ names, callback }) => {
+        if (names.includes("*") || names.includes(payload.event)) callback(withMeta);
+      });
+    };
+
+    socket.onerror = () => setStatus("error");
+
+    socket.onclose = (ev) => {
+      setStatus("closed");
+      if (closedByUser.current) return;
+      if (ev.code === 4403) return; // token refusé : inutile de boucler
+      const delay = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempt.current, RECONNECT_MAX_MS);
+      reconnectAttempt.current += 1;
+      reconnectTimer.current = setTimeout(connect, delay);
+    };
+  }, [token]);
+
+  useEffect(() => {
+    connect();
+    return () => {
+      closedByUser.current = true;
+      clearTimeout(reconnectTimer.current);
+      socketRef.current?.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  const reconnectNow = useCallback(() => {
+    clearTimeout(reconnectTimer.current);
+    reconnectAttempt.current = 0;
+    socketRef.current?.close();
+    connect();
+  }, [connect]);
+
+  const clearEvents = useCallback(() => setEvents([]), []);
+
+  // Permet d'injecter un événement factice sans dépendre du backend —
+  // gardé comme utilitaire de test générique même si le bouton dédié à la
+  // roulette a été retiré du panneau Réglages.
+  const simulateEvent = useCallback((payload) => {
+    const withMeta = { ...payload, _id: ++idCounter, _ts: Date.now() };
+    setEvents((prev) => {
+      const next = [withMeta, ...prev];
+      return next.length > MAX_EVENTS ? next.slice(0, MAX_EVENTS) : next;
+    });
+    listeners.current.forEach(({ names, callback }) => {
+      if (names.includes("*") || names.includes(payload.event)) callback(withMeta);
+    });
+  }, []);
+
+  const value = useMemo(
+    () => ({ status, events, token, setToken, subscribe, reconnectNow, clearEvents, simulateEvent }),
+    [status, events, token, setToken, subscribe, reconnectNow, clearEvents, simulateEvent],
+  );
+
+  return <WsContext.Provider value={value}>{children}</WsContext.Provider>;
+}
+
+export function useWs() {
+  const ctx = useContext(WsContext);
+  if (!ctx) throw new Error("useWs doit être utilisé dans <WsProvider>");
+  return ctx;
+}
+
+================================================================================
+
+# src/hooks/useResource.js
+--------------------------------------------------------------------------------
+import { useCallback, useEffect, useState } from "react";
+import { useWs } from "../context/WsContext";
+
+export function useResource(fetcher, { refreshOn = [], deps = [] } = {}) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const { subscribe } = useWs();
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetcher();
+      setData(res);
+    } catch (e) {
+      setError(e.message || "Erreur inconnue");
+    } finally {
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  useEffect(() => {
+    if (refreshOn.length === 0) return undefined;
+    return subscribe(refreshOn, () => reload());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subscribe, reload]);
+
+  return { data, loading, error, reload, setData };
+}
+
+================================================================================
+
+# src/main.jsx
+--------------------------------------------------------------------------------
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './styles/global.css'
+import App from './App.jsx'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+
+================================================================================
+
+# src/pages/CandidatsPanel.jsx
+--------------------------------------------------------------------------------
+import { useState } from "react";
+import { api } from "../api/client";
+import { useResource } from "../hooks/useResource";
+import { useToast } from "../context/ToastContext";
+import Icon from "../components/Icon";
+
+const MAX_ACTIFS = 3;
+
+function formatHeure(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+
+export default function CandidatsPanel() {
+  const { data, loading, error, reload } = useResource(api.listeCandidats, {
+    refreshOn: [
+      "inscription",
+      "candidat_actif",
+      "retrait",
+      "vire_manuel",
+      "employe_actif",
+      "poste_choisi",
+      "carte_assignee",
+    ],
+  });
+  const toast = useToast();
+  const [busyId, setBusyId] = useState(null);
+
+  const attente = (data || []).filter((c) => c.statut === "attente");
+  const actifs = (data || []).filter((c) => c.statut === "actif");
+  const peutAccepter = actifs.length < MAX_ACTIFS;
+
+  async function run(id, fn, msgOk) {
+    setBusyId(id);
+    try {
+      await fn();
+      toast.success(msgOk);
+      reload();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function accepter(c) {
+    if (!peutAccepter) {
+      return toast.error(
+        `Déjà ${MAX_ACTIFS} candidats actifs — retire-en un d'abord.`
+      );
+    }
+    run(c.id, () => api.accepterCandidat(c.id), `${c.nom} appelé à l'enregistrement.`);
+  }
+
+  async function supprimer(c) {
+    if (!window.confirm(`Supprimer définitivement ${c.nom} de la file ?`)) return;
+    run(c.id, () => api.supprimerCandidat(c.id), `${c.nom} supprimé.`);
+  }
+
+  async function retirer(c) {
+    run(c.id, () => api.retirerCandidat(c.id), `${c.nom} retiré du poste actif.`);
+  }
+
+  async function virer(c) {
+    if (
+      !window.confirm(
+        `Virer ${c.nom} maintenant ? Cette action désactive son badge et son visage.`
+      )
+    )
+      return;
+    run(c.id, () => api.virerCandidat(c.id), `${c.nom} viré.`);
+  }
+
+  async function viderAttente() {
+    if (!window.confirm("Archiver toute la file d'attente vers l'historique ?")) return;
+    run("all", () => api.viderAttente(), "File d'attente vidée.");
+  }
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <div className="eyebrow">Parcours candidat</div>
+          <h1>Candidats</h1>
+        </div>
+        <button
+          className="btn btn-danger"
+          onClick={viderAttente}
+          disabled={busyId === "all" || attente.length === 0}
+        >
+          <Icon name="trash" size={14} />
+          Vider la file d&apos;attente
+        </button>
+      </div>
+
+      <div className="grid-2">
+        <section className="panel">
+          <div className="panel-header">
+            <h2>Postes actifs</h2>
+            <span className={`badge ${actifs.length > 0 ? "badge-green" : "badge-mute"}`}>
+              {actifs.length}/{MAX_ACTIFS}
+            </span>
+          </div>
+          <div className="panel-body">
+            {loading && !data && <div className="empty">Chargement…</div>}
+            {!loading && actifs.length === 0 && (
+              <div className="empty">
+                <strong>Aucun candidat actif</strong>
+                Accepte jusqu&apos;à {MAX_ACTIFS} personnes depuis la file d&apos;attente.
+              </div>
+            )}
+            {actifs.map((actif) => (
+              <div key={actif.id} className="active-card" style={{ marginBottom: 12 }}>
+                <div className="active-card-name">{actif.nom}</div>
+                <div className="dim" style={{ fontSize: 12.5, marginBottom: 14 }}>
+                  Accepté à {formatHeure(actif.heure_acceptation)}
+                  {actif.poste_attribue ? (
+                    <>
+                      {" "}
+                      · poste choisi : <strong>{actif.poste_attribue}</strong>
+                    </>
+                  ) : (
+                    <> · en attente d&apos;enrôlement visage / choix du poste</>
+                  )}
+                </div>
+                <div className="flex gap-8">
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => retirer(actif)}
+                    disabled={busyId === actif.id}
+                  >
+                    Retirer
+                  </button>
+                  <button
+                    className="btn btn-danger btn-sm"
+                    onClick={() => virer(actif)}
+                    disabled={busyId === actif.id}
+                  >
+                    Virer
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-header">
+            <h2>File d&apos;attente</h2>
+            <span className="badge badge-mute">{attente.length}</span>
+          </div>
+          <div className="panel-body tight">
+            {loading && <div className="empty">Chargement…</div>}
+            {error && <div className="empty">{error}</div>}
+            {!loading && attente.length === 0 && (
+              <div className="empty">
+                <strong>File vide</strong>
+                Les inscriptions faites depuis le front visiteur apparaîtront ici.
+              </div>
+            )}
+            {attente.length > 0 && (
+              <div className="table-scroll">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Nom</th>
+                      <th>Inscrit à</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {attente.map((c) => (
+                      <tr key={c.id}>
+                        <td>{c.nom}</td>
+                        <td className="mono dim">{formatHeure(c.heure_inscription)}</td>
+                        <td>
+                          <div
+                            className="flex gap-8"
+                            style={{ justifyContent: "flex-end" }}
+                          >
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={() => accepter(c)}
+                              disabled={busyId === c.id || !peutAccepter}
+                              title={
+                                !peutAccepter
+                                  ? `Maximum ${MAX_ACTIFS} actifs`
+                                  : undefined
+                              }
+                            >
+                              Accepter
+                            </button>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => supprimer(c)}
+                              disabled={busyId === c.id}
+                            >
+                              <Icon name="trash" size={13} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+================================================================================
+
+# src/pages/CartesPanel.jsx
+--------------------------------------------------------------------------------
+import { useState } from "react";
+import { api } from "../api/client";
+import { useResource } from "../hooks/useResource";
+import { useToast } from "../context/ToastContext";
+import Icon from "../components/Icon";
+
+export default function CartesPanel() {
+  const { data, loading, error, reload } = useResource(api.listeCartes, {
+    refreshOn: ["carte_assignee", "entree_entreprise", "sortie_entreprise"],
+  });
+  const {
+    data: attente,
+    loading: loadingAttente,
+    reload: reloadAttente,
+  } = useResource(api.listeCartesEnAttente, {
+    refreshOn: ["poste_choisi", "carte_assignee", "employe_actif", "vire_manuel", "retrait"],
+  });
+  const {
+    data: dispo,
+    reload: reloadDispo,
+  } = useResource(api.listeCartesDisponibles, {
+    refreshOn: ["carte_assignee"],
+  });
+
+  const toast = useToast();
+  const [uid, setUid] = useState("");
+  const [couleur, setCouleur] = useState("");
+  const [busy, setBusy] = useState(false);
+  // employe_id -> carterfid_id sélectionné dans le select
+  const [choix, setChoix] = useState({});
+
+  const cartes = data || [];
+  const enAttente = attente || [];
+  const disponibles = dispo || [];
+
+  async function creer(e) {
+    e.preventDefault();
+    if (!uid.trim()) return;
+    setBusy(true);
+    try {
+      await api.creerCarte({ uidcarte: uid.trim(), couleur: couleur.trim() || null });
+      toast.success(`Carte ${uid} créée.`);
+      setUid("");
+      setCouleur("");
+      reload();
+      reloadDispo();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function supprimer(c) {
+    if (!window.confirm(`Supprimer la carte ${c.uidcarte} ?`)) return;
+    setBusy(true);
+    try {
+      await api.supprimerCarte(c.id);
+      toast.success("Carte supprimée.");
+      reload();
+      reloadDispo();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function attribuer(employeId) {
+    const carterfidId = choix[employeId];
+    if (!carterfidId) {
+      toast.error("Choisis d'abord une carte disponible.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api.attribuerCarte(employeId, Number(carterfidId));
+      toast.success(`Carte ${res.carte_uid} remise à ${res.nom}. Donne-lui la carte physique.`);
+      setChoix((prev) => {
+        const next = { ...prev };
+        delete next[employeId];
+        return next;
+      });
+      reload();
+      reloadAttente();
+      reloadDispo();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <div className="eyebrow">Badges physiques</div>
+          <h1>Cartes RFID</h1>
+        </div>
+        <span className="badge badge-mute">
+          {cartes.length} carte{cartes.length > 1 ? "s" : ""}
+        </span>
+      </div>
+
+      {/* ---- En attente de carte ---- */}
+      <section className="panel">
+        <div className="panel-header">
+          <h2>En attente de carte</h2>
+          <span className={`badge ${enAttente.length > 0 ? "badge-yellow" : "badge-mute"}`}>
+            {enAttente.length}
+          </span>
+        </div>
+        <div className="panel-body tight">
+          {loadingAttente && !attente && <div className="empty">Chargement…</div>}
+          {!loadingAttente && enAttente.length === 0 && (
+            <div className="empty">
+              <strong>Personne n&apos;attend de carte</strong>
+              Les candidats apparaissent ici une fois le visage enrôlé et le poste choisi
+              depuis leur téléphone. Tu leur remets alors une carte physique.
+            </div>
+          )}
+          {enAttente.length > 0 && (
+            <div className="table-scroll">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Employé</th>
+                    <th>Poste</th>
+                    <th>Matricule</th>
+                    <th>Carte à remettre</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {enAttente.map((row) => (
+                    <tr key={row.employe_id}>
+                      <td>
+                        <strong>{row.nom}</strong>
+                      </td>
+                      <td>{row.poste || <span className="mute">—</span>}</td>
+                      <td className="mono dim">{row.matricule}</td>
+                      <td>
+                        <select
+                          value={choix[row.employe_id] || ""}
+                          onChange={(e) =>
+                            setChoix((prev) => ({
+                              ...prev,
+                              [row.employe_id]: e.target.value,
+                            }))
+                          }
+                          disabled={busy || disponibles.length === 0}
+                          style={{ minWidth: 140 }}
+                        >
+                          <option value="">
+                            {disponibles.length === 0
+                              ? "Aucune carte libre"
+                              : "Choisir une carte…"}
+                          </option>
+                          {disponibles.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.uidcarte}
+                              {c.couleur ? ` (${c.couleur})` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td style={{ textAlign: "right" }}>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => attribuer(row.employe_id)}
+                          disabled={busy || !choix[row.employe_id]}
+                        >
+                          Attribuer
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {disponibles.length === 0 && enAttente.length > 0 && (
+            <div className="mute" style={{ fontSize: 12.5, marginTop: 10 }}>
+              Aucune carte libre : ajoute des UID ci-dessous avant d&apos;attribuer.
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ---- Toutes les cartes ---- */}
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Toutes les cartes</h2>
+        </div>
+        <div className="panel-body tight">
+          {loading && <div className="empty">Chargement…</div>}
+          {error && <div className="empty">{error}</div>}
+          {!loading && cartes.length === 0 && (
+            <div className="empty">
+              <strong>Aucune carte enregistrée</strong>
+              Ajoute l&apos;UID de chaque badge RFID physique disponible pour l&apos;expo.
+            </div>
+          )}
+          {cartes.length > 0 && (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>UID</th>
+                  <th>Couleur</th>
+                  <th>Présent dans l&apos;entreprise</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {cartes.map((c) => (
+                  <tr key={c.id}>
+                    <td className="mono">{c.uidcarte}</td>
+                    <td>{c.couleur || <span className="mute">—</span>}</td>
+                    <td>
+                      <span className={`badge ${c.isentree ? "badge-green" : "badge-mute"}`}>
+                        {c.isentree ? "Dedans" : "Dehors"}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => supprimer(c)}
+                        disabled={busy}
+                      >
+                        <Icon name="trash" size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <form onSubmit={creer} className="inline-form">
+            <div className="field" style={{ flex: 2 }}>
+              <label htmlFor="carte-uid">UID de la carte</label>
+              <input
+                id="carte-uid"
+                value={uid}
+                onChange={(e) => setUid(e.target.value)}
+                placeholder="ex. 04:A3:F1:9C"
+              />
+            </div>
+            <div className="field" style={{ flex: 1 }}>
+              <label htmlFor="carte-couleur">Couleur (optionnel)</label>
+              <input
+                id="carte-couleur"
+                value={couleur}
+                onChange={(e) => setCouleur(e.target.value)}
+                placeholder="ex. noire"
+              />
+            </div>
+            <button className="btn btn-primary" type="submit" disabled={busy}>
+              <Icon name="plus" size={14} /> Ajouter
+            </button>
+          </form>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+================================================================================
+
+# src/pages/Dashboard.jsx
+--------------------------------------------------------------------------------
+import { useState } from "react";
+import Sidebar from "../components/Sidebar";
+import Topbar from "../components/Topbar";
+import { FeedTicker } from "../components/LiveFeed";
+import LivePage from "./LivePage";
+import CandidatsPanel from "./CandidatsPanel";
+import EmployesPanel from "./EmployesPanel";
+import HistoriquePanel from "./HistoriquePanel";
+import PostesPanel from "./PostesPanel";
+import CartesPanel from "./CartesPanel";
+import PresencesPanel from "./PresencesPanel";
+import SimulationPanel from "./SimulationPanel";
+import ReglagesPanel from "./ReglagesPanel";
+
+const PAGES = {
+  live: LivePage,
+  candidats: CandidatsPanel,
+  employes: EmployesPanel,
+  historique: HistoriquePanel,
+  postes: PostesPanel,
+  cartes: CartesPanel,
+  presences: PresencesPanel,
+  simulation: SimulationPanel,
+  reglages: ReglagesPanel,
+};
+
+export default function Dashboard() {
+  const [tab, setTab] = useState("live");
+  const Page = PAGES[tab] || LivePage;
+
+  return (
+    <div className="app-shell">
+      <Topbar />
+      <Sidebar active={tab} onChange={setTab} />
+      <main className="main">
+        <Page />
+      </main>
+      <FeedTicker />
+    </div>
+  );
+}
+
+================================================================================
+
+# src/pages/EmployesPanel.jsx
+--------------------------------------------------------------------------------
+/**
+ * Employés — liste simple (actifs / inactifs), sans drawer de parcours.
+ * Le détail journalier (entrées / sorties / absences) vit désormais dans
+ * Historique, filtré par date.
+ *
+ * Actions :
+ *  - Virer  → status Inactif, carte détachée, biometrie nettoyée, marque
+ *             "viré" pour aujourd'hui (reste visible dans Historique ce jour-là
+ *             puis disparaît des jours suivants).
+ *  - Supprimer → suppression définitive (hard delete).
+ */
+
+import { useMemo, useState } from "react";
+import { api } from "../api/client";
+import { useResource } from "../hooks/useResource";
+import { useToast } from "../context/ToastContext";
+import Icon from "../components/Icon";
+
+async function fetchList() {
+  const [employes, postes] = await Promise.all([
+    api.listeEmployes(),
+    api.listePostes(),
+  ]);
+  return { employes, postes };
+}
+
+export default function EmployesPanel() {
+  const toast = useToast();
+  const [search, setSearch] = useState("");
+  const [filtreStatut, setFiltreStatut] = useState("Actif"); // Actif | Inactif | tous
+  const [busy, setBusy] = useState(null);
+
+  const { data, loading, error, reload } = useResource(fetchList, {
+    refreshOn: [
+      "employe_actif",
+      "poste_choisi",
+      "vire_manuel",
+      "simulation_end",
+      "carte_assignee",
+    ],
+  });
+
+  const employes = data?.employes || [];
+  const postes = data?.postes || [];
+  const posteMap = useMemo(
+    () => Object.fromEntries(postes.map((p) => [p.id, p.type_poste])),
+    [postes]
+  );
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return employes.filter((e) => {
+      if (filtreStatut !== "tous" && (e.status || "Actif") !== filtreStatut) {
+        return false;
+      }
+      if (!q) return true;
+      const nom = `${e.nom || ""} ${e.prenom || ""}`.toLowerCase();
+      return (
+        nom.includes(q) || (e.matricule || "").toLowerCase().includes(q)
+      );
+    });
+  }, [employes, search, filtreStatut]);
+
+  async function virer(e) {
+    const nom = `${e.nom || ""} ${e.prenom || ""}`.trim() || e.matricule;
+    if (
+      !window.confirm(
+        `Virer ${nom} ?\nIl passera Inactif aujourd'hui, disparaîtra de la liste active, et restera visible dans Historique uniquement pour les jours où il a travaillé (ou le jour du licenciement).`
+      )
+    ) {
+      return;
+    }
+    setBusy(e.id);
+    try {
+      await api.virerEmploye(e.id);
+      toast.success(`${nom} a été viré.`);
+      reload();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function supprimer(e) {
+    const nom = `${e.nom || ""} ${e.prenom || ""}`.trim() || e.matricule;
+    if (
+      !window.confirm(
+        `Supprimer définitivement ${nom} ?\nToutes ses données (présences, absences) seront perdues. Préférez « Virer » pour conserver l'historique.`
+      )
+    ) {
+      return;
+    }
+    setBusy(e.id);
+    try {
+      await api.supprimerEmploye(e.id);
+      toast.success("Employé supprimé.");
+      reload();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const nbActifs = employes.filter((e) => e.status === "Actif").length;
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <div className="eyebrow">Effectif</div>
+          <h1>Employés</h1>
+        </div>
+        <span className={`badge ${nbActifs > 0 ? "badge-green" : "badge-mute"}`}>
+          {nbActifs} actif{nbActifs !== 1 ? "s" : ""}
+        </span>
+      </div>
+
+      <div
+        className="flex gap-8"
+        style={{ marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}
+      >
+        <div className="field" style={{ width: 240, margin: 0 }}>
+          <input
+            type="search"
+            placeholder="Rechercher nom, matricule…"
+            value={search}
+            onChange={(ev) => setSearch(ev.target.value)}
+          />
+        </div>
+        <div className="flex gap-8" style={{ alignItems: "center" }}>
+          {["Actif", "Inactif", "tous"].map((s) => (
+            <button
+              key={s}
+              type="button"
+              className={`btn btn-sm ${filtreStatut === s ? "btn-primary" : "btn-ghost"}`}
+              onClick={() => setFiltreStatut(s)}
+            >
+              {s === "tous" ? "Tous" : s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>
+            {filtered.length} employé{filtered.length !== 1 ? "s" : ""}
+            {search && ` (filtre « ${search} »)`}
+          </h2>
+        </div>
+        <div className="panel-body tight">
+          {loading && !data && <div className="empty">Chargement…</div>}
+          {error && <div className="empty">{error}</div>}
+          {!loading && filtered.length === 0 && (
+            <div className="empty">
+              <strong>Aucun employé</strong>
+              {search || filtreStatut !== "tous"
+                ? "Aucun résultat pour ce filtre."
+                : "Les employés apparaissent après acceptation d'un candidat."}
+            </div>
+          )}
+          {filtered.length > 0 && (
+            <div className="table-scroll">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Nom</th>
+                    <th>Matricule</th>
+                    <th>Poste</th>
+                    <th>Statut</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((e) => (
+                    <tr key={e.id}>
+                      <td>
+                        <strong>
+                          {e.nom} {e.prenom || ""}
+                        </strong>
+                      </td>
+                      <td className="mono">{e.matricule}</td>
+                      <td>
+                        {e.id_poste ? (
+                          posteMap[e.id_poste] || "—"
+                        ) : (
+                          <span className="mute">—</span>
+                        )}
+                      </td>
+                      <td>
+                        <span
+                          className={`badge ${
+                            e.status === "Actif" ? "badge-green" : "badge-red"
+                          }`}
+                        >
+                          {e.status || "—"}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        {e.status === "Actif" && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => virer(e)}
+                            disabled={busy === e.id}
+                            title="Virer (passe Inactif, garde l'historique)"
+                          >
+                            {busy === e.id ? (
+                              <span className="spinner" />
+                            ) : (
+                              <Icon name="logout" size={13} />
+                            )}
+                            Virer
+                          </button>
+                        )}
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => supprimer(e)}
+                          disabled={busy === e.id}
+                          title="Supprimer définitivement"
+                        >
+                          {busy === e.id ? (
+                            <span className="spinner" />
+                          ) : (
+                            <Icon name="trash" size={13} />
+                          )}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <p className="mute" style={{ fontSize: 12.5, marginTop: 12 }}>
+        Le détail des pointages (entrées, sorties, absences) se consulte dans{" "}
+        <strong>Historique</strong>, jour par jour.
+      </p>
+    </div>
+  );
+}
+
+================================================================================
+
+# src/pages/HistoriquePanel.jsx
+--------------------------------------------------------------------------------
+/**
+ * Historique journalier.
+ *
+ * - Sélecteur de date en haut (calendrier natif + flèches J-1 / J+1 / Aujourd'hui)
+ * - Titre long : « Jeudi 20 août 2026 »
+ * - Liste des employés ayant un événement ce jour-là :
+ *     présent (entrée/sortie), absent, ou viré
+ * - Clic sur une ligne → détail du jour uniquement (pas de timeline multi-jours)
+ * - Rafraîchissement temps réel via WebSocket (entrées, sorties, virages, simu)
+ *
+ * Un employé n'apparaît un jour J que s'il a une présence, une absence ou un
+ * licenciement enregistré pour J. S'il est viré le 21, il n'apparaît plus le 22.
+ * S'il est seulement absent le 21, il peut réapparaître le 22 (s'il a un
+ * événement ce jour-là).
+ */
+
+import { useMemo, useState } from "react";
+import { api } from "../api/client";
+import { useResource } from "../hooks/useResource";
+import Icon from "../components/Icon";
+
+function toISODate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function parseISODate(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function formatTitreLong(iso) {
+  const d = parseISODate(iso);
+  const s = d.toLocaleDateString("fr-FR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+  // Capitalise le jour de la semaine
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function formatHeure(h) {
+  if (!h) return "—";
+  return h.length >= 5 ? h.slice(0, 5) : h;
+}
+
+function formatDuree(min) {
+  if (min == null) return null;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h === 0) return `${m} min`;
+  return `${h}h${String(m).padStart(2, "0")}`;
+}
+
+const STATUT_BADGE = {
+  present: "badge-green",
+  absent: "badge-yellow",
+  vire: "badge-red",
+};
+
+const STATUT_LABEL = {
+  present: "Présent",
+  absent: "Absent",
+  vire: "Viré",
+};
+
+export default function HistoriquePanel() {
+  const [jour, setJour] = useState(() => toISODate(new Date()));
+  const [selected, setSelected] = useState(null);
+
+  const { data, loading, error, reload } = useResource(
+    () => api.historiqueJour(jour),
+    {
+      deps: [jour],
+      refreshOn: [
+        "entree_entreprise",
+        "sortie_entreprise",
+        "vire_manuel",
+        "simulation_day",
+        "simulation_end",
+        "retrait",
+      ],
+    }
+  );
+
+  const lignes = data?.employes || [];
+
+  const counts = useMemo(() => {
+    const c = { present: 0, absent: 0, vire: 0 };
+    for (const e of lignes) {
+      if (c[e.statut_jour] != null) c[e.statut_jour] += 1;
+    }
+    return c;
+  }, [lignes]);
+
+  function shiftJour(delta) {
+    const d = parseISODate(jour);
+    d.setDate(d.getDate() + delta);
+    setJour(toISODate(d));
+    setSelected(null);
+  }
+
+  function goToday() {
+    setJour(toISODate(new Date()));
+    setSelected(null);
+  }
+
+  const detail = selected
+    ? lignes.find((e) => e.employe_id === selected) || null
+    : null;
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <div className="eyebrow">Archives journalières</div>
+          <h1>Historique</h1>
+        </div>
+        <button className="btn btn-ghost btn-sm" onClick={reload} disabled={loading}>
+          <Icon name="refresh" size={13} />
+          Actualiser
+        </button>
+      </div>
+
+      {/* Sélecteur de date */}
+      <div
+        className="panel"
+        style={{ marginBottom: 16, padding: "14px 18px" }}
+      >
+        <div
+          className="flex gap-8"
+          style={{
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 12,
+          }}
+        >
+          <div className="flex gap-8" style={{ alignItems: "center" }}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => shiftJour(-1)}
+              title="Jour précédent"
+            >
+              ‹
+            </button>
+            <input
+              type="date"
+              value={jour}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setJour(e.target.value);
+                  setSelected(null);
+                }
+              }}
+              style={{
+                fontFamily: "inherit",
+                fontSize: 14,
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: "1px solid var(--border, #333)",
+                background: "var(--bg-elevated, #1a1a1a)",
+                color: "var(--text)",
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => shiftJour(1)}
+              title="Jour suivant"
+            >
+              ›
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={goToday}>
+              Aujourd'hui
+            </button>
+          </div>
+
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 16, fontWeight: 600 }}>
+              {formatTitreLong(jour)}
+            </div>
+            <div className="mute mono" style={{ fontSize: 12, marginTop: 2 }}>
+              {counts.present} présent{counts.present !== 1 ? "s" : ""} ·{" "}
+              {counts.absent} absent{counts.absent !== 1 ? "s" : ""} ·{" "}
+              {counts.vire} viré{counts.vire !== 1 ? "s" : ""}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>
+            {lignes.length} employé{lignes.length !== 1 ? "s" : ""} ce jour
+          </h2>
+        </div>
+        <div className="panel-body tight">
+          {loading && !data && <div className="empty">Chargement…</div>}
+          {error && <div className="empty">{error}</div>}
+          {!loading && lignes.length === 0 && (
+            <div className="empty">
+              <strong>Rien pour ce jour</strong>
+              Aucune présence, absence ni licenciement enregistré le{" "}
+              {formatTitreLong(jour)}.
+            </div>
+          )}
+          {lignes.length > 0 && (
+            <div className="table-scroll">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Nom</th>
+                    <th>Poste</th>
+                    <th>Statut du jour</th>
+                    <th>Entrée</th>
+                    <th>Sortie</th>
+                    <th>Durée</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lignes.map((e) => (
+                    <tr
+                      key={e.employe_id}
+                      style={{ cursor: "pointer" }}
+                      onClick={() =>
+                        setSelected(
+                          selected === e.employe_id ? null : e.employe_id
+                        )
+                      }
+                      className={selected === e.employe_id ? "row-selected" : ""}
+                    >
+                      <td>
+                        <strong>
+                          {e.nom} {e.prenom || ""}
+                        </strong>
+                      </td>
+                      <td>{e.poste || <span className="mute">—</span>}</td>
+                      <td>
+                        <span
+                          className={`badge ${
+                            STATUT_BADGE[e.statut_jour] || "badge-mute"
+                          }`}
+                        >
+                          {STATUT_LABEL[e.statut_jour] || e.statut_jour}
+                        </span>
+                      </td>
+                      <td className="mono">
+                        {e.statut_jour === "present"
+                          ? formatHeure(e.heure_entree)
+                          : "—"}
+                      </td>
+                      <td className="mono">
+                        {e.statut_jour === "present"
+                          ? formatHeure(e.heure_sortie)
+                          : "—"}
+                      </td>
+                      <td className="mono">
+                        {e.statut_jour === "present" && e.duree_minutes != null
+                          ? formatDuree(e.duree_minutes)
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Détail du jour pour l'employé sélectionné */}
+      {detail && (
+        <section className="panel" style={{ marginTop: 16 }}>
+          <div className="panel-header">
+            <h2>
+              {detail.nom} {detail.prenom || ""} — {formatTitreLong(jour)}
+            </h2>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setSelected(null)}
+            >
+              <Icon name="x" size={13} />
+            </button>
+          </div>
+          <div className="panel-body">
+            <div className="drawer-meta" style={{ marginBottom: 18 }}>
+              <div>
+                <span className="mute">Matricule</span>
+                <div className="mono">{detail.matricule || "—"}</div>
+              </div>
+              <div>
+                <span className="mute">Poste</span>
+                <div>{detail.poste || "—"}</div>
+              </div>
+              <div>
+                <span className="mute">Statut ce jour</span>
+                <div>
+                  <span
+                    className={`badge ${
+                      STATUT_BADGE[detail.statut_jour] || "badge-mute"
+                    }`}
+                  >
+                    {STATUT_LABEL[detail.statut_jour] || detail.statut_jour}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {detail.statut_jour === "vire" && (
+              <p className="sous-texte" style={{ margin: 0 }}>
+                Licencié ce jour
+                {detail.raison ? ` — ${detail.raison}` : "."}
+              </p>
+            )}
+
+            {detail.statut_jour === "absent" && (
+              <p className="sous-texte" style={{ margin: 0 }}>
+                Absent
+                {detail.raison ? ` — ${detail.raison}` : "."}
+              </p>
+            )}
+
+            {detail.statut_jour === "present" && (
+              <>
+                {(detail.evenements || []).length === 0 && (
+                  <p className="mute" style={{ margin: 0 }}>
+                    Présence enregistrée, détail des pointages indisponible.
+                  </p>
+                )}
+                {(detail.evenements || []).length > 0 && (
+                  <div className="parcours-timeline">
+                    {detail.evenements.map((ev, i) => (
+                      <div
+                        key={`${ev.type}-${ev.heure || i}`}
+                        className={`parcours-item tone-border-${
+                          ev.type === "entree"
+                            ? "green"
+                            : ev.type === "sortie"
+                              ? "blue"
+                              : "mute"
+                        }`}
+                      >
+                        <div className="parcours-icon">
+                          {ev.type === "entree"
+                            ? "→"
+                            : ev.type === "sortie"
+                              ? "←"
+                              : "•"}
+                        </div>
+                        <div className="parcours-body">
+                          <div className="parcours-label">{ev.label}</div>
+                          <div className="parcours-meta mono">
+                            {ev.heure ? formatHeure(ev.heure) : ""}
+                            {ev.duree_minutes != null
+                              ? ` · ${formatDuree(ev.duree_minutes)}`
+                              : ""}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+================================================================================
+
+# src/pages/LivePage.jsx
+--------------------------------------------------------------------------------
+import { FeedList } from "../components/LiveFeed";
+
+export default function LivePage() {
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <div className="eyebrow">Vue projecteur</div>
+          <h1>Direct</h1>
+        </div>
+      </div>
+
+      <section className="panel live-panel">
+        <FeedList limit={150} />
+      </section>
+    </div>
+  );
+}
+
+================================================================================
+
+# src/pages/Login.jsx
+--------------------------------------------------------------------------------
+import { useState } from "react";
+import { useAuth } from "../context/AuthContext";
+
+export default function Login() {
+  const { login, loading, error } = useAuth();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  function submit(e) {
+    e.preventDefault();
+    if (!email || !password) return;
+    login(email, password);
+  }
+
+  return (
+    <div className="login-screen">
+      <div className="login-card panel">
+        <div className="login-mark">
+          <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+            <circle cx="20" cy="20" r="18" stroke="var(--gold)" strokeWidth="2" />
+            <path d="M20 2 A18 18 0 0 1 35.6 11" stroke="var(--red)" strokeWidth="3" strokeLinecap="round" />
+            <path d="M35.6 29 A18 18 0 0 1 20 38" stroke="var(--yellow)" strokeWidth="3" strokeLinecap="round" />
+            <path d="M4.4 29 A18 18 0 0 1 4.4 11" stroke="var(--blue)" strokeWidth="3" strokeLinecap="round" />
+            <circle cx="20" cy="20" r="4" fill="var(--gold-bright)" />
+          </svg>
+        </div>
+        <div className="eyebrow">Accès restreint</div>
+        <h1>Poste de contrôle</h1>
+        <p className="dim login-sub">Connexion administrateur — Système de Sécurité &amp; Pointage</p>
+
+        <form onSubmit={submit} className="login-form">
+          <div className="field">
+            <label htmlFor="email">Email</label>
+            <input
+              id="email"
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="admin@expo.local"
+              required
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="password">Mot de passe</label>
+            <input
+              id="password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              required
+            />
+          </div>
+
+          {error && <div className="login-error">{error}</div>}
+
+          <button type="submit" className="btn btn-primary btn-block" disabled={loading}>
+            {loading ? <span className="spinner" /> : null}
+            {loading ? "Connexion…" : "Entrer dans la régie"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+================================================================================
+
+# src/pages/PostesPanel.jsx
+--------------------------------------------------------------------------------
+import { useState } from "react";
+import { api } from "../api/client";
+import { useResource } from "../hooks/useResource";
+import { useToast } from "../context/ToastContext";
+import Icon from "../components/Icon";
+
+export default function PostesPanel() {
+  const { data, loading, error, reload } = useResource(api.listePostes, { refreshOn: ["poste_choisi"] });
+  const toast = useToast();
+  const [nom, setNom] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const postes = data || [];
+
+  async function seed() {
+    setBusy(true);
+    try {
+      const created = await api.seedPostesDemo();
+      toast.success(created.length ? `${created.length} poste(s) créé(s).` : "Postes déjà en place.");
+      reload();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function creer(e) {
+    e.preventDefault();
+    if (!nom.trim()) return;
+    setBusy(true);
+    try {
+      await api.creerPoste({ type_poste: nom.trim() });
+      toast.success(`Poste "${nom}" créé.`);
+      setNom("");
+      reload();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function supprimer(p) {
+    if (!window.confirm(`Supprimer le poste "${p.type_poste}" ?`)) return;
+    setBusy(true);
+    try {
+      await api.supprimerPoste(p.id);
+      toast.success("Poste supprimé.");
+      reload();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <div className="eyebrow">Back-office</div>
+          <h1>Postes</h1>
+        </div>
+        <button className="btn" onClick={seed} disabled={busy}>
+          <Icon name="dial" size={14} />
+          Seed démo (Vendeur / Nettoyeur / Boss)
+        </button>
+      </div>
+
+      <div className="mute" style={{ fontSize: 12.5, marginBottom: 16 }}>
+        Ces postes sont proposés au candidat depuis son téléphone, une fois son
+        visage enrôlé : c'est lui qui choisit son poste dans cette liste, il
+        n'y a plus de tirage au sort.
+      </div>
+
+      <section className="panel">
+        <div className="panel-header"><h2>Postes configurés</h2></div>
+        <div className="panel-body tight">
+          {loading && <div className="empty">Chargement…</div>}
+          {!loading && postes.length === 0 && (
+            <div className="empty">
+              <strong>Aucun poste configuré</strong>
+              Utilise le seed démo ou crée-en un manuellement — sinon le candidat n'aura rien à choisir sur son téléphone.
+            </div>
+          )}
+          {postes.length > 0 && (
+            <table className="table">
+              <thead><tr><th>Poste</th><th /></tr></thead>
+              <tbody>
+                {postes.map((p) => (
+                  <tr key={p.id}>
+                    <td>{p.type_poste}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <button className="btn btn-ghost btn-sm" onClick={() => supprimer(p)} disabled={busy}>
+                        <Icon name="trash" size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <form onSubmit={creer} className="inline-form">
+            <div className="field" style={{ flex: 2 }}>
+              <label htmlFor="poste-nom">Nom du poste</label>
+              <input id="poste-nom" value={nom} onChange={(e) => setNom(e.target.value)} placeholder="ex. Stagiaire café" />
+            </div>
+            <button className="btn btn-primary" type="submit" disabled={busy}>
+              <Icon name="plus" size={14} /> Ajouter
+            </button>
+          </form>
+        </div>
+      </section>
+      {error && <div className="empty">{error}</div>}
+    </div>
+  );
+}
+
+================================================================================
+
+# src/pages/PresencesPanel.jsx
+--------------------------------------------------------------------------------
+/**
+ * Présence live — une fiche par employé actif.
+ * Position = entrée (carte.isentree) ou sortie.
+ * Clignote en rouge sur acces_refuse (mauvais visage + bonne carte).
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api } from "../api/client";
+import { useResource } from "../hooks/useResource";
+import { useWs } from "../context/WsContext";
+import { useToast } from "../context/ToastContext";
+import Icon from "../components/Icon";
+
+function formatDuree(min) {
+  if (min == null) return "—";
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return h === 0 ? `${m} min` : `${h}h${String(m).padStart(2, "0")}`;
+}
+
+function formatHeure(h) {
+  if (!h) return "—";
+  return h.length >= 5 ? h.slice(0, 5) : h;
+}
+
+async function fetchBoard() {
+  const [employes, presents, postes] = await Promise.all([
+    api.listeEmployes(),
+    api.listePresentsLive(),
+    api.listePostes(),
+  ]);
+  return { employes, presents, postes };
+}
+
+export default function PresencesPanel() {
+  const toast = useToast();
+  const { subscribe } = useWs();
+  const [busyId, setBusyId] = useState(null);
+  const [alertIds, setAlertIds] = useState(() => new Set());
+  const alertTimers = useRef(new Map());
+
+  const { data, loading, error, reload } = useResource(fetchBoard, {
+    refreshOn: [
+      "entree_entreprise",
+      "sortie_entreprise",
+      "vire_manuel",
+      "simulation_end",
+      "carte_assignee",
+      "employe_actif",
+    ],
+  });
+
+  // Flash rouge ~2,5 s sur la fiche concernée
+  const flashAlert = useCallback((employeId) => {
+    if (!employeId) return;
+    setAlertIds((prev) => new Set(prev).add(employeId));
+    const prevTimer = alertTimers.current.get(employeId);
+    if (prevTimer) clearTimeout(prevTimer);
+    const t = setTimeout(() => {
+      setAlertIds((prev) => {
+        const next = new Set(prev);
+        next.delete(employeId);
+        return next;
+      });
+      alertTimers.current.delete(employeId);
+    }, 2500);
+    alertTimers.current.set(employeId, t);
+  }, []);
+
+  useEffect(() => {
+    return subscribe(["acces_refuse"], (ev) => {
+      flashAlert(ev.employe_id);
+    });
+  }, [subscribe, flashAlert]);
+
+  useEffect(() => () => {
+    alertTimers.current.forEach((t) => clearTimeout(t));
+  }, []);
+
+  const posteMap = useMemo(
+    () => Object.fromEntries((data?.postes || []).map((p) => [p.id, p.type_poste])),
+    [data]
+  );
+
+  const presentMap = useMemo(() => {
+    const m = new Map();
+    for (const p of data?.presents || []) m.set(p.employe_id, p);
+    return m;
+  }, [data]);
+
+  const actifs = useMemo(
+    () => (data?.employes || []).filter((e) => (e.status || "Actif") === "Actif"),
+    [data]
+  );
+
+  const nbDedans = actifs.filter((e) => presentMap.has(e.id)).length;
+
+  async function forcerSortie(e) {
+    const nom = `${e.nom || ""} ${e.prenom || ""}`.trim() || `#${e.id}`;
+    if (!window.confirm(`Forcer la sortie de ${nom} ?`)) return;
+    setBusyId(e.id);
+    try {
+      const res = await api.forceSortie(e.id);
+      toast.success(
+        `Sortie forcée — ${formatHeure(res.heure_sortie)}` +
+          (res.duree_minutes != null ? ` (${formatDuree(res.duree_minutes)})` : "")
+      );
+      reload();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <div className="eyebrow">Temps réel</div>
+          <h1>Présence live</h1>
+        </div>
+        <div className="flex gap-8" style={{ alignItems: "center" }}>
+          <span className={`badge ${nbDedans > 0 ? "badge-green" : "badge-mute"}`}>
+            {nbDedans} / {actifs.length} dedans
+          </span>
+          <button className="btn btn-ghost btn-sm" onClick={reload} disabled={loading}>
+            <Icon name="refresh" size={13} />
+            Actualiser
+          </button>
+        </div>
+      </div>
+
+      {loading && !data && <div className="empty">Chargement…</div>}
+      {error && <div className="empty">{error}</div>}
+
+      {!loading && actifs.length === 0 && (
+        <div className="empty">
+          <strong>Aucun employé actif</strong>
+          Accepte un candidat, enrôle le visage, choisis le poste et attribue une carte.
+        </div>
+      )}
+
+      {actifs.length > 0 && (
+        <div className="presence-board">
+          {actifs.map((e) => {
+            const live = presentMap.get(e.id);
+            const dedans = Boolean(live);
+            const alerte = alertIds.has(e.id);
+            const poste = e.id_poste ? posteMap[e.id_poste] || `#${e.id_poste}` : "—";
+            const uid = live?.uidcarte /* si live */ || null;
+
+            return (
+              <div
+                key={e.id}
+                className={`presence-card ${dedans ? "in" : "out"} ${alerte ? "alert" : ""}`}
+              >
+                <div className="presence-card-head">
+                  <strong>
+                    {e.nom} {e.prenom || ""}
+                  </strong>
+                  <span className="mono dim">#{e.id}</span>
+                </div>
+
+                <div className="presence-card-row">
+                  <span className="mute">Poste</span>
+                  <span>{poste}</span>
+                </div>
+
+                <div className="presence-card-row">
+                  <span className="mute">Position</span>
+                  <span className={`badge ${dedans ? "badge-green" : "badge-mute"}`}>
+                    {dedans ? "Entrée" : "Sortie"}
+                  </span>
+                </div>
+
+                {dedans && (
+                  <div className="presence-card-row">
+                    <span className="mute">Depuis</span>
+                    <span className="mono">
+                      {formatHeure(live.heure_entree)} · {formatDuree(live.minutes_depuis)}
+                    </span>
+                  </div>
+                )}
+
+                <div className="presence-card-row">
+                  <span className="mute">Carte</span>
+                  <span className="mono dim">{uid || e.matricule /* fallback */ || "—"}</span>
+                </div>
+
+                {dedans && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ marginTop: 10, width: "100%" }}
+                    onClick={() => forcerSortie(e)}
+                    disabled={busyId === e.id}
+                    title="Forcer la sortie"
+                  >
+                    {busyId === e.id ? <span className="spinner" /> : <Icon name="logout" size={13} />}
+                    Sortir
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+================================================================================
+
+# src/pages/ReglagesPanel.jsx
+--------------------------------------------------------------------------------
+import { useState } from "react";
+import { API_BASE } from "../api/client";
+import { useWs } from "../context/WsContext";
+import { useAuth } from "../context/AuthContext";
+import Icon from "../components/Icon";
+
+const STATUS_LABEL = {
+  idle: "En attente d'un token",
+  connecting: "Connexion…",
+  open: "Connecté",
+  closed: "Coupé — reconnexion auto",
+  error: "Erreur de connexion",
+};
+
+export default function ReglagesPanel() {
+  const { status, token, setToken, reconnectNow } = useWs();
+  const { session } = useAuth();
+  const [draft, setDraft] = useState(token);
+
+  function save(e) {
+    e.preventDefault();
+    setToken(draft.trim());
+  }
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <div className="eyebrow">Configuration</div>
+          <h1>Réglages</h1>
+        </div>
+      </div>
+
+      <div className="grid-2">
+        <section className="panel">
+          <div className="panel-header"><h2>Connexion API</h2></div>
+          <div className="panel-body">
+            <div className="field">
+              <label>Base API (REST)</label>
+              <input value={API_BASE} readOnly />
+            </div>
+            <div className="mute" style={{ fontSize: 12, marginTop: 8 }}>
+              Configurée via <code className="mono">VITE_API_BASE</code> au build. Connecté en tant que <span className="mono">{session?.email}</span>.
+            </div>
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-header">
+            <h2>WebSocket régie (/ws/admin)</h2>
+            <span className={`badge ${status === "open" ? "badge-green" : status === "connecting" ? "badge-yellow" : "badge-red"}`}>
+              {STATUS_LABEL[status]}
+            </span>
+          </div>
+          <div className="panel-body">
+            <form onSubmit={save} className="field">
+              <label htmlFor="ws-token">ADMIN_WS_TOKEN</label>
+              <input
+                id="ws-token"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="jeton défini côté serveur (settings.ADMIN_WS_TOKEN)"
+              />
+              <div className="flex gap-8" style={{ marginTop: 10 }}>
+                <button className="btn btn-primary btn-sm" type="submit">Enregistrer &amp; connecter</button>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={reconnectNow}>
+                  <Icon name="refresh" size={13} /> Forcer la reconnexion
+                </button>
+              </div>
+            </form>
+            <div className="mute" style={{ fontSize: 12, marginTop: 10 }}>
+              Ce token est distinct du compte admin : c'est le secret statique du serveur qui protège le flux temps réel projeté.
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+================================================================================
+
+# src/pages/SimulationPanel.jsx
+--------------------------------------------------------------------------------
+import { useState } from "react";
+import { api } from "../api/client";
+import { useResource } from "../hooks/useResource";
+import { useWs } from "../context/WsContext";
+import { useToast } from "../context/ToastContext";
+import Icon from "../components/Icon";
+
+const SIM_EVENTS = ["simulation_start", "simulation_day", "simulation_end"];
+
+function formatHeure(ts) {
+  return new Date(ts).toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+export default function SimulationPanel() {
+  const { data, loading, reload } = useResource(api.listeCandidats, {
+    refreshOn: [
+      "candidat_actif",
+      "poste_choisi",
+      "retrait",
+      "vire_manuel",
+      "carte_assignee",
+    ],
+  });
+  const { events } = useWs();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [selectedId, setSelectedId] = useState(null);
+
+  // Candidats actifs ayant déjà un poste (éligibles à la simulation)
+  const eligibles = (data || []).filter(
+    (c) => c.statut === "actif" && c.poste_attribue
+  );
+  // Autres actifs (encore en enrôlement / choix de poste)
+  const enCours = (data || []).filter(
+    (c) => c.statut === "actif" && !c.poste_attribue
+  );
+
+  const actif =
+    eligibles.find((c) => c.id === selectedId) || eligibles[0] || null;
+
+  const simLog = events.filter((e) => SIM_EVENTS.includes(e.event));
+
+  async function demarrer() {
+    if (!actif) return;
+    setBusy(true);
+    try {
+      await api.demarrerSimulation(actif.id);
+      toast.success(`Simulation lancée pour ${actif.nom}.`);
+      reload();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <div className="eyebrow">Épreuve accélérée</div>
+          <h1>Simulation 7 jours</h1>
+        </div>
+      </div>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Candidat éligible</h2>
+          {eligibles.length > 0 && (
+            <span className="badge badge-green">
+              {eligibles.length} prêt{eligibles.length > 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
+        <div className="panel-body">
+          {loading && <div className="empty">Chargement…</div>}
+
+          {!loading && eligibles.length === 0 && (
+            <div className="empty">
+              <strong>Aucun candidat éligible</strong>
+              Accepte d&apos;abord un candidat depuis l&apos;onglet Candidats,
+              puis fais-lui enrôler son visage et choisir son poste depuis son
+              téléphone avant de lancer la simulation.
+              {enCours.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  {enCours.length} candidat{enCours.length > 1 ? "s" : ""} actif
+                  {enCours.length > 1 ? "s" : ""} encore en attente
+                  d&apos;enrôlement / choix de poste :{" "}
+                  {enCours.map((c) => c.nom).join(", ")}.
+                </div>
+              )}
+            </div>
+          )}
+
+          {eligibles.length > 0 && (
+            <div className="active-card">
+              {eligibles.length > 1 && (
+                <div className="field" style={{ marginBottom: 14 }}>
+                  <label htmlFor="sim-candidat">Choisir le candidat</label>
+                  <select
+                    id="sim-candidat"
+                    value={actif?.id || ""}
+                    onChange={(e) => setSelectedId(Number(e.target.value))}
+                  >
+                    {eligibles.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nom} — {c.poste_attribue}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="active-card-name">{actif.nom}</div>
+              <div className="dim" style={{ fontSize: 12.5, margin: "6px 0 16px" }}>
+                Poste choisi : <strong>{actif.poste_attribue}</strong>
+              </div>
+              <button
+                className="btn btn-primary"
+                onClick={demarrer}
+                disabled={busy || !actif}
+              >
+                {busy ? (
+                  <span className="spinner" />
+                ) : (
+                  <Icon name="bolt" size={14} />
+                )}
+                Démarrer les 7 jours simulés
+              </button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Journal de simulation</h2>
+          <span className="badge badge-mute">{simLog.length}</span>
+        </div>
+        <div className="panel-body tight">
+          {simLog.length === 0 && (
+            <div className="empty">
+              <strong>Aucune simulation en cours</strong>
+              Chaque jour simulé (présence, absence, virage) apparaîtra ici en
+              direct.
+            </div>
+          )}
+          {simLog.length > 0 && (
+            <div className="feed-list">
+              {simLog.map((ev) => (
+                <div
+                  key={ev._id}
+                  className={`feed-row tone-border-${
+                    ev.event === "simulation_end"
+                      ? "red"
+                      : ev.event === "simulation_start"
+                        ? "yellow"
+                        : "blue"
+                  }`}
+                >
+                  <div className="feed-row-icon">
+                    {ev.event === "simulation_end"
+                      ? "🏁"
+                      : ev.event === "simulation_start"
+                        ? "▶️"
+                        : "📅"}
+                  </div>
+                  <div className="feed-row-body">
+                    <div className="feed-row-text">
+                      {ev.event === "simulation_day" &&
+                        `Jour ${ev.jour} (${ev.date}) — ${ev.candidat?.nom} : ${ev.description} — statut final : ${ev.statut}`}
+                      {ev.event === "simulation_start" &&
+                        (ev.message || `Démarrage pour ${ev.candidat?.nom}`)}
+                      {ev.event === "simulation_end" &&
+                        (ev.message || `Fin (${ev.raison})`)}
+                    </div>
+                    <div className="feed-row-meta mono">
+                      {formatHeure(ev._ts)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+================================================================================
+
+# vite.config.js
+--------------------------------------------------------------------------------
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+})
+
+================================================================================
+

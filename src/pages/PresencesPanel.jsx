@@ -1,74 +1,113 @@
 /**
- * Présence live — remplace l'ancien panneau Présences/Absences redondant.
- *
- * Affiche :
- *  - Qui est actuellement dans l'entreprise (carte.isentree = true)
- *  - Heure d'entrée + temps passé
- *  - Bouton "Forcer sortie" (admin)
- *  - Compteur
- *  - Journal du jour (entrées/sorties via WebSocket déjà dans le feed)
+ * Présence live — une fiche par employé actif.
+ * Position = entrée (carte.isentree) ou sortie.
+ * Clignote en rouge sur acces_refuse (mauvais visage + bonne carte).
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { useResource } from "../hooks/useResource";
+import { useWs } from "../context/WsContext";
 import { useToast } from "../context/ToastContext";
 import Icon from "../components/Icon";
 
 function formatDuree(min) {
-  if (min === null || min === undefined) return "—";
+  if (min == null) return "—";
   const h = Math.floor(min / 60);
   const m = min % 60;
-  if (h === 0) return `${m} min`;
-  return `${h}h${String(m).padStart(2, "0")}`;
+  return h === 0 ? `${m} min` : `${h}h${String(m).padStart(2, "0")}`;
 }
 
 function formatHeure(h) {
   if (!h) return "—";
-  // accepte "HH:MM:SS" ou déjà formaté
   return h.length >= 5 ? h.slice(0, 5) : h;
 }
 
-async function fetchMeta() {
-  const [presents, postes] = await Promise.all([
+async function fetchBoard() {
+  const [employes, presents, postes] = await Promise.all([
+    api.listeEmployes(),
     api.listePresentsLive(),
     api.listePostes(),
   ]);
-  return { presents, postes };
+  return { employes, presents, postes };
 }
 
 export default function PresencesPanel() {
   const toast = useToast();
+  const { subscribe } = useWs();
   const [busyId, setBusyId] = useState(null);
+  const [alertIds, setAlertIds] = useState(() => new Set());
+  const alertTimers = useRef(new Map());
 
-  const { data, loading, error, reload } = useResource(fetchMeta, {
+  const { data, loading, error, reload } = useResource(fetchBoard, {
     refreshOn: [
       "entree_entreprise",
       "sortie_entreprise",
       "vire_manuel",
       "simulation_end",
+      "carte_assignee",
+      "employe_actif",
     ],
   });
 
-  const presents = data?.presents || [];
+  // Flash rouge ~2,5 s sur la fiche concernée
+  const flashAlert = useCallback((employeId) => {
+    if (!employeId) return;
+    setAlertIds((prev) => new Set(prev).add(employeId));
+    const prevTimer = alertTimers.current.get(employeId);
+    if (prevTimer) clearTimeout(prevTimer);
+    const t = setTimeout(() => {
+      setAlertIds((prev) => {
+        const next = new Set(prev);
+        next.delete(employeId);
+        return next;
+      });
+      alertTimers.current.delete(employeId);
+    }, 2500);
+    alertTimers.current.set(employeId, t);
+  }, []);
+
+  useEffect(() => {
+    return subscribe(["acces_refuse"], (ev) => {
+      flashAlert(ev.employe_id);
+    });
+  }, [subscribe, flashAlert]);
+
+  useEffect(() => () => {
+    alertTimers.current.forEach((t) => clearTimeout(t));
+  }, []);
+
   const posteMap = useMemo(
     () => Object.fromEntries((data?.postes || []).map((p) => [p.id, p.type_poste])),
     [data]
   );
 
-  async function forcerSortie(p) {
-    const nom = `${p.nom || ""} ${p.prenom || ""}`.trim() || `#${p.employe_id}`;
+  const presentMap = useMemo(() => {
+    const m = new Map();
+    for (const p of data?.presents || []) m.set(p.employe_id, p);
+    return m;
+  }, [data]);
+
+  const actifs = useMemo(
+    () => (data?.employes || []).filter((e) => (e.status || "Actif") === "Actif"),
+    [data]
+  );
+
+  const nbDedans = actifs.filter((e) => presentMap.has(e.id)).length;
+
+  async function forcerSortie(e) {
+    const nom = `${e.nom || ""} ${e.prenom || ""}`.trim() || `#${e.id}`;
     if (!window.confirm(`Forcer la sortie de ${nom} ?`)) return;
-    setBusyId(p.employe_id);
+    setBusyId(e.id);
     try {
-      const res = await api.forceSortie(p.employe_id);
+      const res = await api.forceSortie(e.id);
       toast.success(
         `Sortie forcée — ${formatHeure(res.heure_sortie)}` +
           (res.duree_minutes != null ? ` (${formatDuree(res.duree_minutes)})` : "")
       );
       reload();
-    } catch (e) {
-      toast.error(e.message);
+    } catch (err) {
+      toast.error(err.message);
     } finally {
       setBusyId(null);
     }
@@ -82,8 +121,8 @@ export default function PresencesPanel() {
           <h1>Présence live</h1>
         </div>
         <div className="flex gap-8" style={{ alignItems: "center" }}>
-          <span className={`badge ${presents.length > 0 ? "badge-green" : "badge-mute"}`}>
-            {presents.length} personne{presents.length !== 1 ? "s" : ""} dedans
+          <span className={`badge ${nbDedans > 0 ? "badge-green" : "badge-mute"}`}>
+            {nbDedans} / {actifs.length} dedans
           </span>
           <button className="btn btn-ghost btn-sm" onClick={reload} disabled={loading}>
             <Icon name="refresh" size={13} />
@@ -92,108 +131,80 @@ export default function PresencesPanel() {
         </div>
       </div>
 
-      <section className="panel">
-        <div className="panel-header">
-          <h2>Actuellement dans l&apos;entreprise</h2>
-        </div>
-        <div className="panel-body tight">
-          {loading && !data && <div className="empty">Chargement…</div>}
-          {error && <div className="empty">{error}</div>}
-          {!loading && presents.length === 0 && (
-            <div className="empty">
-              <strong>Personne à l&apos;intérieur</strong>
-              Les employés apparaissent ici dès qu&apos;ils badgent (carte + visage)
-              à l&apos;entrée. Ils disparaissent à la sortie.
-            </div>
-          )}
-          {presents.length > 0 && (
-            <div className="table-scroll">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Employé</th>
-                    <th>Poste</th>
-                    <th>Entrée</th>
-                    <th>Temps passé</th>
-                    <th>Carte</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {presents.map((p) => (
-                    <tr key={p.employe_id}>
-                      <td>
-                        <strong>
-                          {p.nom} {p.prenom || ""}
-                        </strong>{" "}
-                        <span className="mono dim">#{p.employe_id}</span>
-                        <div className="mute mono" style={{ fontSize: 11 }}>
-                          {p.matricule}
-                        </div>
-                      </td>
-                      <td>
-                        {p.id_poste ? (
-                          posteMap[p.id_poste] || `#${p.id_poste}`
-                        ) : (
-                          <span className="mute">—</span>
-                        )}
-                      </td>
-                      <td className="mono">{formatHeure(p.heure_entree)}</td>
-                      <td>
-                        <span className="badge badge-green">
-                          {formatDuree(p.minutes_depuis)}
-                        </span>
-                      </td>
-                      <td className="mono dim">{p.uidcarte || "—"}</td>
-                      <td style={{ textAlign: "right" }}>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => forcerSortie(p)}
-                          disabled={busyId === p.employe_id}
-                          title="Forcer la sortie (oubli de badge)"
-                        >
-                          {busyId === p.employe_id ? (
-                            <span className="spinner" />
-                          ) : (
-                            <Icon name="logout" size={13} />
-                          )}
-                          Sortir
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </section>
+      {loading && !data && <div className="empty">Chargement…</div>}
+      {error && <div className="empty">{error}</div>}
 
-      <section className="panel">
-        <div className="panel-header">
-          <h2>Comment ça marche</h2>
+      {!loading && actifs.length === 0 && (
+        <div className="empty">
+          <strong>Aucun employé actif</strong>
+          Accepte un candidat, enrôle le visage, choisis le poste et attribue une carte.
         </div>
-        <div className="panel-body">
-          <ul className="dim" style={{ fontSize: 13, lineHeight: 1.7, margin: 0, paddingLeft: 18 }}>
-            <li>
-              Un employé est <strong>présent</strong> dès qu&apos;il présente carte + visage
-              et que l&apos;action est une <em>entrée</em>.
-            </li>
-            <li>
-              La prochaine scan (même carte + visage) devient automatiquement une{" "}
-              <em>sortie</em> — on enregistre l&apos;heure de sortie et la durée.
-            </li>
-            <li>
-              « Forcer sortie » sert si quelqu&apos;un part sans badger (fin de journée,
-              oubli…).
-            </li>
-            <li>
-              Le détail complet d&apos;un employé (toutes les entrées/sorties + graphique)
-              se trouve dans l&apos;onglet <strong>Employés</strong> → clic sur une ligne.
-            </li>
-          </ul>
+      )}
+
+      {actifs.length > 0 && (
+        <div className="presence-board">
+          {actifs.map((e) => {
+            const live = presentMap.get(e.id);
+            const dedans = Boolean(live);
+            const alerte = alertIds.has(e.id);
+            const poste = e.id_poste ? posteMap[e.id_poste] || `#${e.id_poste}` : "—";
+            const uid = live?.uidcarte /* si live */ || null;
+
+            return (
+              <div
+                key={e.id}
+                className={`presence-card ${dedans ? "in" : "out"} ${alerte ? "alert" : ""}`}
+              >
+                <div className="presence-card-head">
+                  <strong>
+                    {e.nom} {e.prenom || ""}
+                  </strong>
+                  <span className="mono dim">#{e.id}</span>
+                </div>
+
+                <div className="presence-card-row">
+                  <span className="mute">Poste</span>
+                  <span>{poste}</span>
+                </div>
+
+                <div className="presence-card-row">
+                  <span className="mute">Position</span>
+                  <span className={`badge ${dedans ? "badge-green" : "badge-mute"}`}>
+                    {dedans ? "Entrée" : "Sortie"}
+                  </span>
+                </div>
+
+                {dedans && (
+                  <div className="presence-card-row">
+                    <span className="mute">Depuis</span>
+                    <span className="mono">
+                      {formatHeure(live.heure_entree)} · {formatDuree(live.minutes_depuis)}
+                    </span>
+                  </div>
+                )}
+
+                <div className="presence-card-row">
+                  <span className="mute">Carte</span>
+                  <span className="mono dim">{uid || e.matricule /* fallback */ || "—"}</span>
+                </div>
+
+                {dedans && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ marginTop: 10, width: "100%" }}
+                    onClick={() => forcerSortie(e)}
+                    disabled={busyId === e.id}
+                    title="Forcer la sortie"
+                  >
+                    {busyId === e.id ? <span className="spinner" /> : <Icon name="logout" size={13} />}
+                    Sortir
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
-      </section>
+      )}
     </div>
   );
 }

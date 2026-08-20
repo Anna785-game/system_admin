@@ -710,6 +710,55 @@ button, input, select, textarea { font-family: inherit; color: inherit; }
   gap: 0;
 }
 
+.presence-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+
+.presence-card {
+  border: 1px solid var(--border, #333);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: var(--panel, #141414);
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.presence-card.in {
+  border-color: color-mix(in srgb, var(--green, #38bd94) 45%, transparent);
+}
+
+.presence-card.alert {
+  animation: presence-alert 0.4s ease-in-out 6;
+  border-color: var(--red, #e55);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--red, #e55) 35%, transparent);
+}
+
+@keyframes presence-alert {
+  0%, 100% { background: var(--panel, #141414); }
+  50% { background: color-mix(in srgb, var(--red, #e55) 18%, transparent); }
+}
+
+.presence-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.presence-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin-top: 6px;
+}
+
 .parcours-item {
   display: flex;
   gap: 12px;

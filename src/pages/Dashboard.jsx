@@ -2,7 +2,6 @@ import { useState } from "react";
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
 import { FeedTicker } from "../components/LiveFeed";
-import RouletteOverlay from "../components/RouletteOverlay";
 import LivePage from "./LivePage";
 import CandidatsPanel from "./CandidatsPanel";
 import EmployesPanel from "./EmployesPanel";
@@ -37,7 +36,6 @@ export default function Dashboard() {
         <Page />
       </main>
       <FeedTicker />
-      <RouletteOverlay />
     </div>
   );
 }
