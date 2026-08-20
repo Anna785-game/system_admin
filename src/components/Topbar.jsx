@@ -1,7 +1,27 @@
+import { useEffect, useState } from "react";
+import Icon from "./Icon";
+import { useWs } from "../context/WsContext";
+import { api } from "../api/client";
 
+const STATUS_LABEL = {
+  idle: ["En attente", "mute"],
+  connecting: ["Connexion…", "yellow"],
+  open: ["En direct", "green"],
+  closed: ["Coupé — reconnexion…", "red"],
+  error: ["Erreur", "red"],
+};
+
+function useClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return now;
+}
 
 export default function Topbar() {
-  const { status } = useWs();
+  const { status, subscribe } = useWs();
   const now = useClock();
   const [stats, setStats] = useState({ en_attente: null, deja_passes: null });
   const [employesActifs, setEmployesActifs] = useState(null);
@@ -27,7 +47,6 @@ export default function Topbar() {
     return () => clearInterval(t);
   }, []);
 
-  const { subscribe } = useWs();
   useEffect(
     () =>
       subscribe(
