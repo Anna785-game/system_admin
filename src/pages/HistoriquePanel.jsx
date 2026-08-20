@@ -209,6 +209,8 @@ export default function HistoriquePanel() {
             fontFamily: "inherit",
             fontSize: 14,
             padding: "8px 12px",
+			color: "#1a1a1a",
+			backgroundColor: "#fff",
           }}
         />
       </div>
@@ -238,7 +240,7 @@ export default function HistoriquePanel() {
                     setSelectedEmp(null);
                   }
                 }}
-                style={{ fontFamily: "inherit", fontSize: 14, padding: "6px 10px" }}
+                style={{ fontFamily: "inherit", fontSize: 14, padding: "6px 10px", color: "#1a1a1a", backgroundColor: "#fff" }}
               />
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => shiftJour(1)}>
                 ›
