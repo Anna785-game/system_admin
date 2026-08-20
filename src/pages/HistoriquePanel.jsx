@@ -1,10 +1,11 @@
 /**
  * Historique journalier — mode Normal | Simulation
- * - Recherche par nom
+ * - Recherche par nom / matricule : GLOBALE (tous les employés, indépendante du jour)
+ * - Sans recherche : vue jour par jour (comme avant)
  * - Clic nom → parcours multi-jours
  * - Clic jour → détail entrées/sorties de ce jour
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useResource } from "../hooks/useResource";
 import Icon from "../components/Icon";
@@ -49,12 +50,16 @@ const STATUT_BADGE = {
   present: "badge-green",
   absent: "badge-yellow",
   vire: "badge-red",
+  Actif: "badge-green",
+  Inactif: "badge-red",
 };
 
 const STATUT_LABEL = {
   present: "Présent",
   absent: "Absent",
   vire: "Viré",
+  Actif: "Actif",
+  Inactif: "Inactif",
 };
 
 export default function HistoriquePanel() {
@@ -63,11 +68,12 @@ export default function HistoriquePanel() {
   const [search, setSearch] = useState("");
   // vue : "jour" | "parcours" | "jour-detail"
   const [vue, setVue] = useState("jour");
-  const [selectedEmp, setSelectedEmp] = useState(null); // ligne du jour
+  const [selectedEmp, setSelectedEmp] = useState(null);
   const [parcours, setParcours] = useState(null);
   const [parcoursLoading, setParcoursLoading] = useState(false);
-  const [jourDetail, setJourDetail] = useState(null); // date ISO dans le parcours
+  const [jourDetail, setJourDetail] = useState(null);
 
+  // --- Données du jour (quand pas de recherche) ---
   const { data, loading, error, reload } = useResource(
     () => api.historiqueJour(jour, mode),
     {
@@ -85,15 +91,70 @@ export default function HistoriquePanel() {
 
   const lignes = data?.employes || [];
 
+  // --- Liste globale des employés (pour la recherche indépendante du jour) ---
+  const [allEmployes, setAllEmployes] = useState([]);
+  const [allPostes, setAllPostes] = useState([]);
+  const [globalLoading, setGlobalLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setGlobalLoading(true);
+      try {
+        const [emps, postes] = await Promise.all([
+          api.listeEmployes(),
+          api.listePostes(),
+        ]);
+        if (!cancelled) {
+          setAllEmployes(emps || []);
+          setAllPostes(postes || []);
+        }
+      } catch {
+        if (!cancelled) {
+          setAllEmployes([]);
+          setAllPostes([]);
+        }
+      } finally {
+        if (!cancelled) setGlobalLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const posteMap = useMemo(
+    () => Object.fromEntries((allPostes || []).map((p) => [p.id, p.type_poste])),
+    [allPostes]
+  );
+
+  const q = search.trim().toLowerCase();
+  const isSearching = q.length > 0;
+
+  // Filtre local sur le jour (seulement si pas de recherche globale)
   const filtrées = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return lignes;
-    return lignes.filter((e) => {
-      const nom = `${e.nom || ""} ${e.prenom || ""}`.toLowerCase();
-      const mat = (e.matricule || "").toLowerCase();
-      return nom.includes(q) || mat.includes(q);
-    });
-  }, [lignes, search]);
+    if (isSearching) return [];
+    return lignes;
+  }, [lignes, isSearching]);
+
+  // Résultats de recherche GLOBALE (tous les employés, indépendant du jour)
+  const resultatsGlobaux = useMemo(() => {
+    if (!isSearching) return [];
+    return allEmployes
+      .filter((e) => {
+        // Mode simulation : on privilégie les employés de simulation si le flag existe
+        if (mode === "simulation" && e.is_simulation === false) return false;
+        if (mode === "normal" && e.is_simulation === true) return false;
+        const nom = `${e.nom || ""} ${e.prenom || ""}`.toLowerCase();
+        const mat = (e.matricule || "").toLowerCase();
+        return nom.includes(q) || mat.includes(q);
+      })
+      .sort((a, b) =>
+        `${a.nom || ""} ${a.prenom || ""}`
+          .toLowerCase()
+          .localeCompare(`${b.nom || ""} ${b.prenom || ""}`.toLowerCase())
+      );
+  }, [allEmployes, q, isSearching, mode]);
 
   const counts = useMemo(() => {
     const c = { present: 0, absent: 0, vire: 0 };
@@ -118,13 +179,22 @@ export default function HistoriquePanel() {
   }
 
   async function ouvrirParcours(emp) {
-    setSelectedEmp(emp);
+    // emp peut venir de l'historique jour (employe_id) ou de listeEmployes (id)
+    const employeId = emp.employe_id ?? emp.id;
+    setSelectedEmp({
+      ...emp,
+      employe_id: employeId,
+      nom: emp.nom,
+      prenom: emp.prenom,
+      matricule: emp.matricule,
+      poste: emp.poste ?? (emp.id_poste ? posteMap[emp.id_poste] : null),
+    });
     setVue("parcours");
     setParcours(null);
     setJourDetail(null);
     setParcoursLoading(true);
     try {
-      const p = await api.parcoursEmploye(emp.employe_id);
+      const p = await api.parcoursEmploye(employeId);
       setParcours(p);
     } catch {
       setParcours(null);
@@ -141,7 +211,6 @@ export default function HistoriquePanel() {
       if (!map.has(ev.date)) map.set(ev.date, []);
       map.get(ev.date).push(ev);
     }
-    // plus récent en premier
     return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
   }, [parcours]);
 
@@ -164,7 +233,11 @@ export default function HistoriquePanel() {
             {mode === "simulation" ? "Historique simulation" : "Historique"}
           </h1>
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={reload} disabled={loading}>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={reload}
+          disabled={loading || isSearching}
+        >
           <Icon name="refresh" size={13} />
           Actualiser
         </button>
@@ -196,27 +269,39 @@ export default function HistoriquePanel() {
         </button>
       </div>
 
-      {/* Recherche */}
+      {/* Recherche — indépendante du jour sélectionné */}
       <div className="panel" style={{ marginBottom: 16, padding: "12px 18px" }}>
         <input
           type="search"
-          placeholder="Rechercher un nom ou matricule…"
+          placeholder="Rechercher un nom ou matricule (tous les jours)…"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            // Dès qu'on tape, on revient à la vue liste (pas parcours)
+            if (vue !== "jour") {
+              setVue("jour");
+              setSelectedEmp(null);
+              setParcours(null);
+              setJourDetail(null);
+            }
+          }}
           style={{
             width: "100%",
-            maxWidth: 360,
+            maxWidth: 420,
             fontFamily: "inherit",
             fontSize: 14,
             padding: "8px 12px",
-			color: "#1a1a1a",
-			backgroundColor: "#fff",
           }}
         />
+        {isSearching && (
+          <div className="mute" style={{ fontSize: 12, marginTop: 8 }}>
+            Recherche sur tout le calendrier — le sélecteur de date est ignoré.
+          </div>
+        )}
       </div>
 
-      {/* Sélecteur de date (vue jour) */}
-      {vue === "jour" && (
+      {/* Sélecteur de date (masqué pendant une recherche globale) */}
+      {vue === "jour" && !isSearching && (
         <div className="panel" style={{ marginBottom: 16, padding: "14px 18px" }}>
           <div
             className="flex gap-8"
@@ -240,13 +325,13 @@ export default function HistoriquePanel() {
                     setSelectedEmp(null);
                   }
                 }}
-                style={{ fontFamily: "inherit", fontSize: 14, padding: "6px 10px", color: "#1a1a1a", backgroundColor: "#fff" }}
+                style={{ fontFamily: "inherit", fontSize: 14, padding: "6px 10px" }}
               />
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => shiftJour(1)}>
                 ›
               </button>
               <button type="button" className="btn btn-ghost btn-sm" onClick={goToday}>
-                Aujourd'hui
+                Aujourd&apos;hui
               </button>
             </div>
             <strong>{formatTitreLong(jour)}</strong>
@@ -259,8 +344,80 @@ export default function HistoriquePanel() {
         </div>
       )}
 
-      {/* Liste du jour */}
-      {vue === "jour" && (
+      {/* ========== RÉSULTATS DE RECHERCHE GLOBALE ========== */}
+      {vue === "jour" && isSearching && (
+        <section className="panel">
+          <div className="panel-header">
+            <h2>
+              Résultats pour « {search.trim()} »
+              <span className="mute" style={{ fontWeight: 400, marginLeft: 10, fontSize: 13 }}>
+                {resultatsGlobaux.length} trouvé{resultatsGlobaux.length !== 1 ? "s" : ""}
+              </span>
+            </h2>
+          </div>
+          <div className="panel-body tight">
+            {globalLoading && <div className="empty">Chargement…</div>}
+            {!globalLoading && resultatsGlobaux.length === 0 && (
+              <div className="empty">
+                <strong>Aucun employé trouvé</strong>
+                Aucun nom ni matricule ne correspond à « {search.trim()} ».
+              </div>
+            )}
+            {resultatsGlobaux.length > 0 && (
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Nom</th>
+                      <th>Matricule</th>
+                      <th>Poste</th>
+                      <th>Statut</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resultatsGlobaux.map((e) => (
+                      <tr
+                        key={e.id}
+                        style={{ cursor: "pointer" }}
+                        onClick={() => ouvrirParcours(e)}
+                      >
+                        <td>
+                          <strong>
+                            {e.nom} {e.prenom || ""}
+                          </strong>
+                        </td>
+                        <td className="mono dim" style={{ fontSize: 12 }}>
+                          {e.matricule}
+                        </td>
+                        <td>
+                          {e.id_poste ? posteMap[e.id_poste] || `#${e.id_poste}` : (
+                            <span className="mute">—</span>
+                          )}
+                        </td>
+                        <td>
+                          <span
+                            className={`badge ${
+                              STATUT_BADGE[e.status] || "badge-mute"
+                            }`}
+                          >
+                            {STATUT_LABEL[e.status] || e.status || "—"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="mute" style={{ fontSize: 12, marginTop: 12, padding: "0 4px 8px" }}>
+              Clique sur un nom pour ouvrir son parcours (tous les jours).
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ========== LISTE DU JOUR (sans recherche) ========== */}
+      {vue === "jour" && !isSearching && (
         <section className="panel">
           <div className="panel-header">
             <h2>
@@ -273,11 +430,9 @@ export default function HistoriquePanel() {
             {!loading && filtrées.length === 0 && (
               <div className="empty">
                 <strong>Personne ce jour</strong>
-                {search
-                  ? "Aucun résultat pour cette recherche."
-                  : mode === "simulation"
-                    ? "Aucune simulation n'a d'événement à cette date."
-                    : "Aucun pointage / absence / virage enregistré."}
+                {mode === "simulation"
+                  ? "Aucune simulation n'a d'événement à cette date."
+                  : "Aucun pointage / absence / virage enregistré."}
               </div>
             )}
             {filtrées.length > 0 && (
@@ -350,7 +505,7 @@ export default function HistoriquePanel() {
                 setJourDetail(null);
               }}
             >
-              <Icon name="x" size={13} /> Retour au jour
+              <Icon name="x" size={13} /> Retour
             </button>
           </div>
           <div className="panel-body">
