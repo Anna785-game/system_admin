@@ -51,6 +51,27 @@ const REGISTRY = {
     majeur: false,
     libelle: (d) => d.message || `Carte ${d.carte_uid} assignée.`,
   },
+    carte_enregistree: {
+    tone: "blue",
+    icon: "📇",
+    majeur: true,
+    libelle: (d) =>
+      d.message || `Nouvelle carte enregistrée : ${d.carte_uid}.`,
+  },
+  carte_libre_scannee: {
+    tone: "yellow",
+    icon: "💳",
+    majeur: false,
+    libelle: (d) =>
+      d.message || `Carte libre scannée : ${d.carte_uid}.`,
+  },
+  porte_carte_ok: {
+    tone: "green",
+    icon: "🚪",
+    majeur: false,
+    libelle: (d) =>
+      d.message || `${d.nom || "Employé"} a badgé à la porte.`,
+  },
   entree_entreprise: {
     tone: "green",
     icon: "🟢",

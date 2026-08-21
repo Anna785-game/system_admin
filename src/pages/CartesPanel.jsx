@@ -1,28 +1,42 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { useResource } from "../hooks/useResource";
 import { useToast } from "../context/ToastContext";
+import { useWs } from "../context/WsContext";
 import Icon from "../components/Icon";
 
 export default function CartesPanel() {
   const { data, loading, error, reload } = useResource(api.listeCartes, {
-    refreshOn: ["carte_assignee", "entree_entreprise", "sortie_entreprise"],
+    refreshOn: [
+      "carte_assignee",
+      "carte_enregistree",
+      "carte_libre_scannee",
+      "entree_entreprise",
+      "sortie_entreprise",
+    ],
   });
   const {
     data: attente,
     loading: loadingAttente,
     reload: reloadAttente,
   } = useResource(api.listeCartesEnAttente, {
-    refreshOn: ["poste_choisi", "carte_assignee", "employe_actif", "vire_manuel", "retrait"],
+    refreshOn: [
+      "poste_choisi",
+      "carte_assignee",
+      "employe_actif",
+      "vire_manuel",
+      "retrait",
+    ],
   });
   const {
     data: dispo,
     reload: reloadDispo,
   } = useResource(api.listeCartesDisponibles, {
-    refreshOn: ["carte_assignee"],
+    refreshOn: ["carte_assignee", "carte_enregistree"],
   });
 
   const toast = useToast();
+  const { subscribe } = useWs();
   const [uid, setUid] = useState("");
   const [couleur, setCouleur] = useState("");
   const [busy, setBusy] = useState(false);
@@ -33,12 +47,32 @@ export default function CartesPanel() {
   const enAttente = attente || [];
   const disponibles = dispo || [];
 
+  // Notif live quand l'ESP32 enregistre / rescane une carte libre
+  useEffect(() => {
+    return subscribe(["carte_enregistree", "carte_libre_scannee"], (ev) => {
+      if (ev.event === "carte_enregistree") {
+        toast.success(
+          ev.message || `Nouvelle carte ${ev.carte_uid} enregistrée (libre).`
+        );
+      } else {
+        toast.info(
+          ev.message || `Carte libre scannée : ${ev.carte_uid}`
+        );
+      }
+      reload();
+      reloadDispo();
+    });
+  }, [subscribe, toast, reload, reloadDispo]);
+
   async function creer(e) {
     e.preventDefault();
     if (!uid.trim()) return;
     setBusy(true);
     try {
-      await api.creerCarte({ uidcarte: uid.trim(), couleur: couleur.trim() || null });
+      await api.creerCarte({
+        uidcarte: uid.trim(),
+        couleur: couleur.trim() || null,
+      });
       toast.success(`Carte ${uid} créée.`);
       setUid("");
       setCouleur("");
@@ -75,7 +109,9 @@ export default function CartesPanel() {
     setBusy(true);
     try {
       const res = await api.attribuerCarte(employeId, Number(carterfidId));
-      toast.success(`Carte ${res.carte_uid} remise à ${res.nom}. Donne-lui la carte physique.`);
+      toast.success(
+        `Carte ${res.carte_uid} remise à ${res.nom}. Donne-lui la carte physique.`
+      );
       setChoix((prev) => {
         const next = { ...prev };
         delete next[employeId];
@@ -107,17 +143,22 @@ export default function CartesPanel() {
       <section className="panel">
         <div className="panel-header">
           <h2>En attente de carte</h2>
-          <span className={`badge ${enAttente.length > 0 ? "badge-yellow" : "badge-mute"}`}>
+          <span
+            className={`badge ${enAttente.length > 0 ? "badge-yellow" : "badge-mute"}`}
+          >
             {enAttente.length}
           </span>
         </div>
         <div className="panel-body tight">
-          {loadingAttente && !attente && <div className="empty">Chargement…</div>}
+          {loadingAttente && !attente && (
+            <div className="empty">Chargement…</div>
+          )}
           {!loadingAttente && enAttente.length === 0 && (
             <div className="empty">
               <strong>Personne n&apos;attend de carte</strong>
-              Les candidats apparaissent ici une fois le visage enrôlé et le poste choisi
-              depuis leur téléphone. Tu leur remets alors une carte physique.
+              Les candidats apparaissent ici une fois le visage enrôlé et le
+              poste choisi depuis leur téléphone. Tu leur remets alors une
+              carte physique.
             </div>
           )}
           {enAttente.length > 0 && (
@@ -138,7 +179,9 @@ export default function CartesPanel() {
                       <td>
                         <strong>{row.nom}</strong>
                       </td>
-                      <td>{row.poste || <span className="mute">—</span>}</td>
+                      <td>
+                        {row.poste || <span className="mute">—</span>}
+                      </td>
                       <td className="mono dim">{row.matricule}</td>
                       <td>
                         <select
@@ -182,7 +225,8 @@ export default function CartesPanel() {
           )}
           {disponibles.length === 0 && enAttente.length > 0 && (
             <div className="mute" style={{ fontSize: 12.5, marginTop: 10 }}>
-              Aucune carte libre : ajoute des UID ci-dessous avant d&apos;attribuer.
+              Aucune carte libre : badge une carte vierge sur la porte (elle
+              s&apos;enregistre toute seule), ou ajoute un UID ci-dessous.
             </div>
           )}
         </div>
@@ -199,7 +243,9 @@ export default function CartesPanel() {
           {!loading && cartes.length === 0 && (
             <div className="empty">
               <strong>Aucune carte enregistrée</strong>
-              Ajoute l&apos;UID de chaque badge RFID physique disponible pour l&apos;expo.
+              Badge une carte vierge sur le lecteur de porte pour
+              l&apos;enregistrer automatiquement, ou saisis un UID
+              manuellement ci-dessous.
             </div>
           )}
           {cartes.length > 0 && (
@@ -216,9 +262,13 @@ export default function CartesPanel() {
                 {cartes.map((c) => (
                   <tr key={c.id}>
                     <td className="mono">{c.uidcarte}</td>
-                    <td>{c.couleur || <span className="mute">—</span>}</td>
                     <td>
-                      <span className={`badge ${c.isentree ? "badge-green" : "badge-mute"}`}>
+                      {c.couleur || <span className="mute">—</span>}
+                    </td>
+                    <td>
+                      <span
+                        className={`badge ${c.isentree ? "badge-green" : "badge-mute"}`}
+                      >
                         {c.isentree ? "Dedans" : "Dehors"}
                       </span>
                     </td>
@@ -238,12 +288,12 @@ export default function CartesPanel() {
           )}
           <form onSubmit={creer} className="inline-form">
             <div className="field" style={{ flex: 2 }}>
-              <label htmlFor="carte-uid">UID de la carte</label>
+              <label htmlFor="carte-uid">UID de la carte (manuel)</label>
               <input
                 id="carte-uid"
                 value={uid}
                 onChange={(e) => setUid(e.target.value)}
-                placeholder="ex. 04:A3:F1:9C"
+                placeholder="ex. 04A3F19C (ou badge sur la porte)"
               />
             </div>
             <div className="field" style={{ flex: 1 }}>
