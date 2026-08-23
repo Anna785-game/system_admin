@@ -17,11 +17,12 @@ import { useToast } from "../context/ToastContext";
 import Icon from "../components/Icon";
 
 async function fetchList() {
-  const [employes, postes] = await Promise.all([
+  const [employes, postes, cartes] = await Promise.all([
     api.listeEmployes(),
     api.listePostes(),
+    api.listeCartes(),
   ]);
-  return { employes, postes };
+  return { employes, postes, cartes };
 }
 
 export default function EmployesPanel() {
@@ -42,9 +43,22 @@ export default function EmployesPanel() {
 
   const employes = data?.employes || [];
   const postes = data?.postes || [];
+  const cartes = data?.cartes || [];
   const posteMap = useMemo(
     () => Object.fromEntries(postes.map((p) => [p.id, p.type_poste])),
     [postes]
+  );
+  // carterfid_id -> "UID (couleur)", pour afficher la carte attribuée à
+  // chaque employé sans changer le schéma EmployeOut côté backend.
+  const carteMap = useMemo(
+    () =>
+      Object.fromEntries(
+        cartes.map((c) => [
+          c.id,
+          c.couleur ? `${c.uidcarte} (${c.couleur})` : c.uidcarte,
+        ])
+      ),
+    [cartes]
   );
 
   const filtered = useMemo(() => {
@@ -65,7 +79,7 @@ export default function EmployesPanel() {
     const nom = `${e.nom || ""} ${e.prenom || ""}`.trim() || e.matricule;
     if (
       !window.confirm(
-        `Virer ${nom} ?\nIl passera Inactif aujourd'hui, disparaîtra de la liste active, et restera visible dans Historique uniquement pour les jours où il a travaillé (ou le jour du licenciement).`
+        `Virer ${nom} ?\nIl passera Inactif aujourd'hui, disparaîtra de la liste active, et restera visible dans Historique uniquement pour les jours où il a travaillé (ou le jour du licenciement). Sa carte RFID sera libérée.`
       )
     ) {
       return;
@@ -73,7 +87,7 @@ export default function EmployesPanel() {
     setBusy(e.id);
     try {
       await api.virerEmploye(e.id);
-      toast.success(`${nom} a été viré.`);
+      toast.success(`${nom} a été viré. Sa carte est de nouveau disponible.`);
       reload();
     } catch (err) {
       toast.error(err.message);
@@ -169,6 +183,7 @@ export default function EmployesPanel() {
                     <th>Nom</th>
                     <th>Matricule</th>
                     <th>Poste</th>
+                    <th>Carte attribuée</th>
                     <th>Statut</th>
                     <th />
                   </tr>
@@ -185,6 +200,15 @@ export default function EmployesPanel() {
                       <td>
                         {e.id_poste ? (
                           posteMap[e.id_poste] || "—"
+                        ) : (
+                          <span className="mute">—</span>
+                        )}
+                      </td>
+                      <td className="mono">
+                        {e.carterfid_id ? (
+                          carteMap[e.carterfid_id] || (
+                            <span className="mute">carte #{e.carterfid_id}</span>
+                          )
                         ) : (
                           <span className="mute">—</span>
                         )}
