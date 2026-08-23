@@ -4,15 +4,21 @@ import { useResource } from "../hooks/useResource";
 import { useToast } from "../context/ToastContext";
 import Icon from "../components/Icon";
 
-const MAX_ACTIFS = 4;
-
 function formatHeure(iso) {
   if (!iso) return "—";
   return new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 
+async function fetchData() {
+  const [candidats, stats] = await Promise.all([
+    api.listeCandidats(),
+    api.statsCandidats(),
+  ]);
+  return { candidats, stats };
+}
+
 export default function CandidatsPanel() {
-  const { data, loading, error, reload } = useResource(api.listeCandidats, {
+  const { data, loading, error, reload } = useResource(fetchData, {
     refreshOn: [
       "inscription",
       "candidat_actif",
@@ -21,14 +27,23 @@ export default function CandidatsPanel() {
       "employe_actif",
       "poste_choisi",
       "carte_assignee",
+      // La capacité (candidats actifs autorisés) suit le nombre de cartes
+      // RFID en base : on se rafraîchit dès qu'une carte apparaît/disparaît.
+      "carte_enregistree",
+      "carte_creee",
+      "carte_supprimee",
     ],
   });
   const toast = useToast();
   const [busyId, setBusyId] = useState(null);
 
-  const attente = (data || []).filter((c) => c.statut === "attente");
-  const actifs = (data || []).filter((c) => c.statut === "actif");
-  const peutAccepter = actifs.length < MAX_ACTIFS;
+  const candidats = data?.candidats || [];
+  const attente = candidats.filter((c) => c.statut === "attente");
+  const actifs = candidats.filter((c) => c.statut === "actif");
+  // Capacité dynamique : autant de candidats actifs que de cartes RFID
+  // enregistrées (scannées au portillon ou ajoutées dans le panneau Cartes).
+  const maxActifs = data?.stats?.max_actifs ?? 0;
+  const peutAccepter = maxActifs > 0 && actifs.length < maxActifs;
 
   async function run(id, fn, msgOk) {
     setBusyId(id);
@@ -46,7 +61,9 @@ export default function CandidatsPanel() {
   async function accepter(c) {
     if (!peutAccepter) {
       return toast.error(
-        `Déjà ${MAX_ACTIFS} candidats actifs — retire-en un d'abord.`
+        maxActifs === 0
+          ? "Aucune carte RFID enregistrée. Scannez-en une avant d'accepter un candidat."
+          : `Déjà ${maxActifs} candidat${maxActifs !== 1 ? "s" : ""} actif${maxActifs !== 1 ? "s" : ""} (autant que de cartes RFID) — retire-en un d'abord.`
       );
     }
     run(c.id, () => api.accepterCandidat(c.id), `${c.nom} appelé à l'enregistrement.`);
@@ -98,15 +115,24 @@ export default function CandidatsPanel() {
           <div className="panel-header">
             <h2>Postes actifs</h2>
             <span className={`badge ${actifs.length > 0 ? "badge-green" : "badge-mute"}`}>
-              {actifs.length}/{MAX_ACTIFS}
+              {actifs.length}/{maxActifs}
             </span>
           </div>
           <div className="panel-body">
             {loading && !data && <div className="empty">Chargement…</div>}
-            {!loading && actifs.length === 0 && (
+            {!loading && maxActifs === 0 && (
+              <div className="empty">
+                <strong>Aucune carte RFID enregistrée</strong>
+                Scannez une carte au portillon, ou ajoutez-en une dans le
+                panneau Cartes, pour pouvoir accepter des candidats. La
+                capacité suit automatiquement le nombre de cartes en base.
+              </div>
+            )}
+            {!loading && maxActifs > 0 && actifs.length === 0 && (
               <div className="empty">
                 <strong>Aucun candidat actif</strong>
-                Accepte jusqu&apos;à {MAX_ACTIFS} personnes depuis la file d&apos;attente.
+                Accepte jusqu&apos;à {maxActifs} personne{maxActifs !== 1 ? "s" : ""} depuis la
+                file d&apos;attente ({maxActifs} carte{maxActifs !== 1 ? "s" : ""} RFID enregistrée{maxActifs !== 1 ? "s" : ""}).
               </div>
             )}
             {actifs.map((actif) => (
@@ -184,7 +210,9 @@ export default function CandidatsPanel() {
                               disabled={busyId === c.id || !peutAccepter}
                               title={
                                 !peutAccepter
-                                  ? `Maximum ${MAX_ACTIFS} actifs`
+                                  ? maxActifs === 0
+                                    ? "Aucune carte RFID enregistrée"
+                                    : `Maximum ${maxActifs} actifs (autant que de cartes RFID)`
                                   : undefined
                               }
                             >

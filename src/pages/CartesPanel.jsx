@@ -10,6 +10,8 @@ export default function CartesPanel() {
     refreshOn: [
       "carte_assignee",
       "carte_enregistree",
+      "carte_creee",
+      "carte_supprimee",
       "carte_libre_scannee",
       "entree_entreprise",
       "sortie_entreprise",
@@ -138,6 +140,12 @@ export default function CartesPanel() {
           {cartes.length} carte{cartes.length > 1 ? "s" : ""}
         </span>
       </div>
+
+      <p className="mute" style={{ fontSize: 12.5, marginTop: -8, marginBottom: 16 }}>
+        Le nombre de cartes ci-dessous détermine la capacité de candidats
+        actifs en parallèle (panneau Candidats) : ajouter une carte
+        l&apos;augmente, en supprimer une la diminue.
+      </p>
 
       {/* ---- En attente de carte ---- */}
       <section className="panel">
