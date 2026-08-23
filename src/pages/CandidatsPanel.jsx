@@ -4,7 +4,7 @@ import { useResource } from "../hooks/useResource";
 import { useToast } from "../context/ToastContext";
 import Icon from "../components/Icon";
 
-const MAX_ACTIFS = 3;
+const MAX_ACTIFS = 4;
 
 function formatHeure(iso) {
   if (!iso) return "—";

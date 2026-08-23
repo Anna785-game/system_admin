@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useResource } from "../hooks/useResource";
 import Icon from "../components/Icon";
+import ParcoursModal from "../components/ParcoursModal";
 
 function toISODate(d) {
   const y = d.getFullYear();
@@ -66,12 +67,7 @@ export default function HistoriquePanel() {
   const [mode, setMode] = useState("normal"); // "normal" | "simulation"
   const [jour, setJour] = useState(() => toISODate(new Date()));
   const [search, setSearch] = useState("");
-  // vue : "jour" | "parcours" | "jour-detail"
-  const [vue, setVue] = useState("jour");
-  const [selectedEmp, setSelectedEmp] = useState(null);
-  const [parcours, setParcours] = useState(null);
-  const [parcoursLoading, setParcoursLoading] = useState(false);
-  const [jourDetail, setJourDetail] = useState(null);
+  const [parcoursEmp, setParcoursEmp] = useState(null); // employé affiché dans le modal parcours
 
   // --- Données du jour (quand pas de recherche) ---
   const { data, loading, error, reload } = useResource(
@@ -168,60 +164,22 @@ export default function HistoriquePanel() {
     const d = parseISODate(jour);
     d.setDate(d.getDate() + delta);
     setJour(toISODate(d));
-    setSelectedEmp(null);
-    setVue("jour");
   }
 
   function goToday() {
     setJour(toISODate(new Date()));
-    setSelectedEmp(null);
-    setVue("jour");
   }
 
-  async function ouvrirParcours(emp) {
+  function ouvrirParcours(emp) {
     // emp peut venir de l'historique jour (employe_id) ou de listeEmployes (id)
     const employeId = emp.employe_id ?? emp.id;
-    setSelectedEmp({
-      ...emp,
+    setParcoursEmp({
       employe_id: employeId,
       nom: emp.nom,
       prenom: emp.prenom,
       matricule: emp.matricule,
       poste: emp.poste ?? (emp.id_poste ? posteMap[emp.id_poste] : null),
     });
-    setVue("parcours");
-    setParcours(null);
-    setJourDetail(null);
-    setParcoursLoading(true);
-    try {
-      const p = await api.parcoursEmploye(employeId);
-      setParcours(p);
-    } catch {
-      setParcours(null);
-    } finally {
-      setParcoursLoading(false);
-    }
-  }
-
-  // Grouper le timeline par date
-  const joursParcours = useMemo(() => {
-    if (!parcours?.timeline) return [];
-    const map = new Map();
-    for (const ev of parcours.timeline) {
-      if (!map.has(ev.date)) map.set(ev.date, []);
-      map.get(ev.date).push(ev);
-    }
-    return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
-  }, [parcours]);
-
-  function resumeJour(events) {
-    const hasVire = events.some(
-      (e) => e.type === "absence" && (e.detail || "").startsWith("Viré")
-    );
-    if (hasVire) return { statut: "vire", label: "Viré" };
-    const hasAbs = events.some((e) => e.type === "absence");
-    if (hasAbs) return { statut: "absent", label: "Absent" };
-    return { statut: "present", label: "Présent" };
   }
 
   return (
@@ -248,22 +206,14 @@ export default function HistoriquePanel() {
         <button
           type="button"
           className={`btn btn-sm ${mode === "normal" ? "btn-primary" : "btn-ghost"}`}
-          onClick={() => {
-            setMode("normal");
-            setVue("jour");
-            setSelectedEmp(null);
-          }}
+          onClick={() => setMode("normal")}
         >
           Historique normal
         </button>
         <button
           type="button"
           className={`btn btn-sm ${mode === "simulation" ? "btn-primary" : "btn-ghost"}`}
-          onClick={() => {
-            setMode("simulation");
-            setVue("jour");
-            setSelectedEmp(null);
-          }}
+          onClick={() => setMode("simulation")}
         >
           Historique simulation
         </button>
@@ -275,16 +225,7 @@ export default function HistoriquePanel() {
           type="search"
           placeholder="Rechercher un nom ou matricule (tous les jours)…"
           value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            // Dès qu'on tape, on revient à la vue liste (pas parcours)
-            if (vue !== "jour") {
-              setVue("jour");
-              setSelectedEmp(null);
-              setParcours(null);
-              setJourDetail(null);
-            }
-          }}
+          onChange={(e) => setSearch(e.target.value)}
           style={{
             width: "100%",
             maxWidth: 420,
@@ -303,7 +244,7 @@ export default function HistoriquePanel() {
       </div>
 
       {/* Sélecteur de date (masqué pendant une recherche globale) */}
-      {vue === "jour" && !isSearching && (
+      {!isSearching && (
         <div className="panel" style={{ marginBottom: 16, padding: "14px 18px" }}>
           <div
             className="flex gap-8"
@@ -322,10 +263,7 @@ export default function HistoriquePanel() {
                 type="date"
                 value={jour}
                 onChange={(e) => {
-                  if (e.target.value) {
-                    setJour(e.target.value);
-                    setSelectedEmp(null);
-                  }
+                  if (e.target.value) setJour(e.target.value);
                 }}
                 style={{ fontFamily: "inherit", fontSize: 14, padding: "6px 10px", color: "#1a1a1a", backgroundColor: "#fff" }}
               />
@@ -347,7 +285,7 @@ export default function HistoriquePanel() {
       )}
 
       {/* ========== RÉSULTATS DE RECHERCHE GLOBALE ========== */}
-      {vue === "jour" && isSearching && (
+      {isSearching && (
         <section className="panel">
           <div className="panel-header">
             <h2>
@@ -419,7 +357,7 @@ export default function HistoriquePanel() {
       )}
 
       {/* ========== LISTE DU JOUR (sans recherche) ========== */}
-      {vue === "jour" && !isSearching && (
+      {!isSearching && (
         <section className="panel">
           <div className="panel-header">
             <h2>
@@ -492,132 +430,8 @@ export default function HistoriquePanel() {
         </section>
       )}
 
-      {/* Parcours multi-jours */}
-      {vue === "parcours" && selectedEmp && (
-        <section className="panel">
-          <div className="panel-header">
-            <h2>
-              Parcours — {selectedEmp.nom} {selectedEmp.prenom || ""}
-            </h2>
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => {
-                setVue("jour");
-                setParcours(null);
-                setJourDetail(null);
-              }}
-            >
-              <Icon name="x" size={13} /> Retour
-            </button>
-          </div>
-          <div className="panel-body">
-            <div className="drawer-meta" style={{ marginBottom: 18 }}>
-              <div>
-                <span className="mute">Matricule</span>
-                <div className="mono">{selectedEmp.matricule || "—"}</div>
-              </div>
-              <div>
-                <span className="mute">Poste</span>
-                <div>{selectedEmp.poste || "—"}</div>
-              </div>
-            </div>
-
-            {parcoursLoading && <div className="empty">Chargement du parcours…</div>}
-            {!parcoursLoading && joursParcours.length === 0 && (
-              <div className="empty">Aucun événement enregistré pour cet employé.</div>
-            )}
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {joursParcours.map(([dateISO, events]) => {
-                const r = resumeJour(events);
-                return (
-                  <button
-                    key={dateISO}
-                    type="button"
-                    className="btn btn-ghost"
-                    style={{
-                      textAlign: "left",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "12px 14px",
-                      border: "1px solid var(--border, #333)",
-                      borderRadius: 8,
-                    }}
-                    onClick={() => {
-                      setJourDetail(dateISO);
-                      setVue("jour-detail");
-                    }}
-                  >
-                    <span>
-                      <strong>{formatTitreLong(dateISO)}</strong>
-                      <span className="mute" style={{ marginLeft: 10, fontSize: 12 }}>
-                        {events.length} événement{events.length > 1 ? "s" : ""}
-                      </span>
-                    </span>
-                    <span className={`badge ${STATUT_BADGE[r.statut] || "badge-mute"}`}>
-                      {r.label}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* Détail d'un jour du parcours */}
-      {vue === "jour-detail" && selectedEmp && jourDetail && (
-        <section className="panel">
-          <div className="panel-header">
-            <h2>
-              {selectedEmp.nom} — {formatTitreLong(jourDetail)}
-            </h2>
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => {
-                setVue("parcours");
-                setJourDetail(null);
-              }}
-            >
-              <Icon name="x" size={13} /> Retour au parcours
-            </button>
-          </div>
-          <div className="panel-body">
-            <div className="parcours-timeline">
-              {(joursParcours.find(([d]) => d === jourDetail)?.[1] || []).map((ev, i) => (
-                <div
-                  key={`${ev.type}-${ev.heure || i}`}
-                  className={`parcours-item tone-border-${
-                    ev.type === "entree"
-                      ? "green"
-                      : ev.type === "sortie"
-                        ? "blue"
-                        : ev.type === "absence"
-                          ? "red"
-                          : "mute"
-                  }`}
-                >
-                  <div className="parcours-icon">
-                    {ev.type === "entree" ? "→" : ev.type === "sortie" ? "←" : "•"}
-                  </div>
-                  <div className="parcours-body">
-                    <div className="parcours-label">{ev.label}</div>
-                    {ev.detail && (
-                      <div className="parcours-meta" style={{ marginTop: 2 }}>
-                        {ev.detail}
-                      </div>
-                    )}
-                    <div className="parcours-meta mono">
-                      {ev.heure ? formatHeure(ev.heure) : ""}
-                      {ev.duree_minutes != null ? ` · ${formatDuree(ev.duree_minutes)}` : ""}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
+      {parcoursEmp && (
+        <ParcoursModal employe={parcoursEmp} onClose={() => setParcoursEmp(null)} />
       )}
     </div>
   );

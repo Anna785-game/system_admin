@@ -15,6 +15,7 @@ import { api } from "../api/client";
 import { useResource } from "../hooks/useResource";
 import { useToast } from "../context/ToastContext";
 import Icon from "../components/Icon";
+import ParcoursModal from "../components/ParcoursModal";
 
 
 async function fetchList() {
@@ -31,6 +32,7 @@ export default function EmployesPanel() {
   const [search, setSearch] = useState("");
   const [filtreStatut, setFiltreStatut] = useState("Actif"); // Actif | Inactif | tous
   const [busy, setBusy] = useState(null);
+  const [parcoursEmp, setParcoursEmp] = useState(null); // employé sélectionné pour le modal parcours
 
   const { data, loading, error, reload } = useResource(fetchList, {
     refreshOn: [
@@ -118,6 +120,16 @@ export default function EmployesPanel() {
     }
   }
 
+  function ouvrirParcours(e) {
+    setParcoursEmp({
+      employe_id: e.id,
+      nom: e.nom,
+      prenom: e.prenom,
+      matricule: e.matricule,
+      poste: e.id_poste ? posteMap[e.id_poste] : null,
+    });
+  }
+
   const nbActifs = employes.filter((e) => e.status === "Actif").length;
 
   return (
@@ -191,7 +203,12 @@ export default function EmployesPanel() {
                 </thead>
                 <tbody>
                   {filtered.map((e) => (
-                    <tr key={e.id}>
+                    <tr
+                      key={e.id}
+                      style={{ cursor: "pointer" }}
+                      onClick={() => ouvrirParcours(e)}
+                      title="Voir le parcours détaillé"
+                    >
                       <td>
                         <strong>
                           {e.nom} {e.prenom || ""}
@@ -223,7 +240,10 @@ export default function EmployesPanel() {
                           {e.status || "—"}
                         </span>
                       </td>
-                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      <td
+                        style={{ textAlign: "right", whiteSpace: "nowrap" }}
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
                         {e.status === "Actif" && (
                           <button
                             className="btn btn-ghost btn-sm"
@@ -262,9 +282,13 @@ export default function EmployesPanel() {
       </section>
 
       <p className="mute" style={{ fontSize: 12.5, marginTop: 12 }}>
-        Le détail des pointages (entrées, sorties, absences) se consulte dans{" "}
-        <strong>Historique</strong>, jour par jour.
+        Clique sur un employé pour voir son parcours détaillé (graphes,
+        présences, absences, journal complet).
       </p>
+
+      {parcoursEmp && (
+        <ParcoursModal employe={parcoursEmp} onClose={() => setParcoursEmp(null)} />
+      )}
     </div>
   );
 }
