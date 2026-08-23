@@ -16,6 +16,7 @@ import { useResource } from "../hooks/useResource";
 import { useToast } from "../context/ToastContext";
 import Icon from "../components/Icon";
 
+
 async function fetchList() {
   const [employes, postes, cartes] = await Promise.all([
     api.listeEmployes(),
