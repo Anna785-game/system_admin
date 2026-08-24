@@ -6,7 +6,10 @@ import Icon from "../components/Icon";
 
 function formatHeure(iso) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 async function fetchData() {
@@ -14,6 +17,7 @@ async function fetchData() {
     api.listeCandidats(),
     api.statsCandidats(),
   ]);
+
   return { candidats, stats };
 }
 
@@ -27,32 +31,39 @@ export default function CandidatsPanel() {
       "employe_actif",
       "poste_choisi",
       "carte_assignee",
-      // La capacité (candidats actifs autorisés) suit le nombre de cartes
-      // RFID en base : on se rafraîchit dès qu'une carte apparaît/disparaît.
       "carte_enregistree",
       "carte_creee",
       "carte_supprimee",
     ],
   });
+
   const toast = useToast();
   const [busyId, setBusyId] = useState(null);
 
   const candidats = data?.candidats || [];
   const attente = candidats.filter((c) => c.statut === "attente");
   const actifs = candidats.filter((c) => c.statut === "actif");
-  // Capacité dynamique : autant de candidats actifs que de cartes RFID
-  // enregistrées (scannées au portillon ou ajoutées dans le panneau Cartes).
+
+  // Nombre maximal d'actifs = nombre de cartes RFID enregistrées.
   const maxActifs = data?.stats?.max_actifs ?? 0;
-  const peutAccepter = maxActifs > 0 && actifs.length < maxActifs;
+
+  // Il reste de la capacité si le nombre actuel d'actifs
+  // est inférieur au nombre de cartes disponibles.
+  const peutAccepter =
+    maxActifs > 0 && actifs.length < maxActifs;
 
   async function run(id, fn, msgOk) {
     setBusyId(id);
+
     try {
       await fn();
+
       toast.success(msgOk);
-      reload();
+
+      // Recharge candidats + statistiques après l'action.
+      await reload();
     } catch (e) {
-      toast.error(e.message);
+      toast.error(e.message || "Une erreur est survenue.");
     } finally {
       setBusyId(null);
     }
@@ -60,22 +71,43 @@ export default function CandidatsPanel() {
 
   async function accepter(c) {
     if (!peutAccepter) {
-      return toast.error(
+      toast.error(
         maxActifs === 0
           ? "Aucune carte RFID enregistrée. Scannez-en une avant d'accepter un candidat."
-          : `Déjà ${maxActifs} candidat${maxActifs !== 1 ? "s" : ""} actif${maxActifs !== 1 ? "s" : ""} (autant que de cartes RFID) — retire-en un d'abord.`
+          : `Déjà ${maxActifs} candidat${
+              maxActifs !== 1 ? "s" : ""
+            } actif${
+              maxActifs !== 1 ? "s" : ""
+            } (autant que de cartes RFID) — retire-en un d'abord.`
       );
+      return;
     }
-    run(c.id, () => api.accepterCandidat(c.id), `${c.nom} appelé à l'enregistrement.`);
+
+    await run(
+      c.id,
+      () => api.accepterCandidat(c.id),
+      `${c.nom} appelé à l'enregistrement.`
+    );
   }
 
   async function supprimer(c) {
-    if (!window.confirm(`Supprimer définitivement ${c.nom} de la file ?`)) return;
-    run(c.id, () => api.supprimerCandidat(c.id), `${c.nom} supprimé.`);
+    if (!window.confirm(`Supprimer définitivement ${c.nom} de la file ?`)) {
+      return;
+    }
+
+    await run(
+      c.id,
+      () => api.supprimerCandidat(c.id),
+      `${c.nom} supprimé.`
+    );
   }
 
   async function retirer(c) {
-    run(c.id, () => api.retirerCandidat(c.id), `${c.nom} retiré du poste actif.`);
+    await run(
+      c.id,
+      () => api.retirerCandidat(c.id),
+      `${c.nom} retiré du poste actif.`
+    );
   }
 
   async function virer(c) {
@@ -83,14 +115,31 @@ export default function CandidatsPanel() {
       !window.confirm(
         `Virer ${c.nom} maintenant ? Cette action désactive son badge et son visage.`
       )
-    )
+    ) {
       return;
-    run(c.id, () => api.virerCandidat(c.id), `${c.nom} viré.`);
+    }
+
+    await run(
+      c.id,
+      () => api.virerCandidat(c.id),
+      `${c.nom} viré.`
+    );
   }
 
   async function viderAttente() {
-    if (!window.confirm("Archiver toute la file d'attente vers l'historique ?")) return;
-    run("all", () => api.viderAttente(), "File d'attente vidée.");
+    if (
+      !window.confirm(
+        "Archiver toute la file d'attente vers l'historique ?"
+      )
+    ) {
+      return;
+    }
+
+    await run(
+      "all",
+      () => api.viderAttente(),
+      "File d'attente vidée."
+    );
   }
 
   return (
@@ -100,10 +149,14 @@ export default function CandidatsPanel() {
           <div className="eyebrow">Parcours candidat</div>
           <h1>Candidats</h1>
         </div>
+
         <button
           className="btn btn-danger"
           onClick={viderAttente}
-          disabled={busyId === "all" || attente.length === 0}
+          disabled={
+            busyId === "all" ||
+            attente.length === 0
+          }
         >
           <Icon name="trash" size={14} />
           Vider la file d&apos;attente
@@ -114,53 +167,114 @@ export default function CandidatsPanel() {
         <section className="panel">
           <div className="panel-header">
             <h2>Postes actifs</h2>
-            <span className={`badge ${actifs.length > 0 ? "badge-green" : "badge-mute"}`}>
+
+            <span
+              className={`badge ${
+                actifs.length > 0
+                  ? "badge-green"
+                  : "badge-mute"
+              }`}
+            >
               {actifs.length}/{maxActifs}
             </span>
           </div>
+
           <div className="panel-body">
-            {loading && !data && <div className="empty">Chargement…</div>}
+            {loading && !data && (
+              <div className="empty">
+                Chargement…
+              </div>
+            )}
+
             {!loading && maxActifs === 0 && (
               <div className="empty">
-                <strong>Aucune carte RFID enregistrée</strong>
-                Scannez une carte au portillon, ou ajoutez-en une dans le
-                panneau Cartes, pour pouvoir accepter des candidats. La
-                capacité suit automatiquement le nombre de cartes en base.
+                <strong>
+                  Aucune carte RFID enregistrée
+                </strong>
+
+                Scannez une carte au portillon, ou
+                ajoutez-en une dans le panneau Cartes,
+                pour pouvoir accepter des candidats.
+                La capacité suit automatiquement le
+                nombre de cartes en base.
               </div>
             )}
-            {!loading && maxActifs > 0 && actifs.length === 0 && (
-              <div className="empty">
-                <strong>Aucun candidat actif</strong>
-                Accepte jusqu&apos;à {maxActifs} personne{maxActifs !== 1 ? "s" : ""} depuis la
-                file d&apos;attente ({maxActifs} carte{maxActifs !== 1 ? "s" : ""} RFID enregistrée{maxActifs !== 1 ? "s" : ""}).
-              </div>
-            )}
+
+            {!loading &&
+              maxActifs > 0 &&
+              actifs.length === 0 && (
+                <div className="empty">
+                  <strong>
+                    Aucun candidat actif
+                  </strong>
+
+                  Accepte jusqu&apos;à {maxActifs}{" "}
+                  personne
+                  {maxActifs !== 1 ? "s" : ""} depuis
+                  la file d&apos;attente (
+                  {maxActifs} carte
+                  {maxActifs !== 1 ? "s" : ""} RFID
+                  enregistrée
+                  {maxActifs !== 1 ? "s" : ""}).
+                </div>
+              )}
+
             {actifs.map((actif) => (
-              <div key={actif.id} className="active-card" style={{ marginBottom: 12 }}>
-                <div className="active-card-name">{actif.nom}</div>
-                <div className="dim" style={{ fontSize: 12.5, marginBottom: 14 }}>
-                  Accepté à {formatHeure(actif.heure_acceptation)}
+              <div
+                key={actif.id}
+                className="active-card"
+                style={{ marginBottom: 12 }}
+              >
+                <div className="active-card-name">
+                  {actif.nom}
+                </div>
+
+                <div
+                  className="dim"
+                  style={{
+                    fontSize: 12.5,
+                    marginBottom: 14,
+                  }}
+                >
+                  Accepté à{" "}
+                  {formatHeure(
+                    actif.heure_acceptation
+                  )}
+
                   {actif.poste_attribue ? (
                     <>
                       {" "}
-                      · poste choisi : <strong>{actif.poste_attribue}</strong>
+                      · poste choisi :{" "}
+                      <strong>
+                        {actif.poste_attribue}
+                      </strong>
                     </>
                   ) : (
-                    <> · en attente d&apos;enrôlement visage / choix du poste</>
+                    <>
+                      {" "}
+                      · en attente d&apos;enrôlement
+                      visage / choix du poste
+                    </>
                   )}
                 </div>
+
                 <div className="flex gap-8">
                   <button
                     className="btn btn-sm"
                     onClick={() => retirer(actif)}
-                    disabled={busyId === actif.id}
+                    disabled={
+                      busyId === actif.id
+                    }
                   >
                     Retirer
                   </button>
+
                   <button
                     className="btn btn-danger btn-sm"
                     onClick={() => virer(actif)}
-                    disabled={busyId === actif.id}
+                    disabled={
+                      busyId === actif.id
+                    }
                   >
                     Virer
                   </button>
@@ -173,17 +287,34 @@ export default function CandidatsPanel() {
         <section className="panel">
           <div className="panel-header">
             <h2>File d&apos;attente</h2>
-            <span className="badge badge-mute">{attente.length}</span>
+
+            <span className="badge badge-mute">
+              {attente.length}
+            </span>
           </div>
+
           <div className="panel-body tight">
-            {loading && <div className="empty">Chargement…</div>}
-            {error && <div className="empty">{error}</div>}
-            {!loading && attente.length === 0 && (
+            {loading && (
               <div className="empty">
-                <strong>File vide</strong>
-                Les inscriptions faites depuis le front visiteur apparaîtront ici.
+                Chargement…
               </div>
             )}
+
+            {error && (
+              <div className="empty">
+                {error}
+              </div>
+            )}
+
+            {!loading &&
+              attente.length === 0 && (
+                <div className="empty">
+                  <strong>File vide</strong>
+                  Les inscriptions faites depuis le
+                  front visiteur apparaîtront ici.
+                </div>
+              )}
+
             {attente.length > 0 && (
               <div className="table-scroll">
                 <table className="table">
@@ -194,20 +325,35 @@ export default function CandidatsPanel() {
                       <th />
                     </tr>
                   </thead>
+
                   <tbody>
                     {attente.map((c) => (
                       <tr key={c.id}>
                         <td>{c.nom}</td>
-                        <td className="mono dim">{formatHeure(c.heure_inscription)}</td>
+
+                        <td className="mono dim">
+                          {formatHeure(
+                            c.heure_inscription
+                          )}
+                        </td>
+
                         <td>
                           <div
                             className="flex gap-8"
-                            style={{ justifyContent: "flex-end" }}
+                            style={{
+                              justifyContent:
+                                "flex-end",
+                            }}
                           >
                             <button
                               className="btn btn-primary btn-sm"
-                              onClick={() => accepter(c)}
-                              disabled={busyId === c.id || !peutAccepter}
+                              onClick={() =>
+                                accepter(c)
+                              }
+                              disabled={
+                                busyId === c.id ||
+                                !peutAccepter
+                              }
                               title={
                                 !peutAccepter
                                   ? maxActifs === 0
@@ -218,12 +364,20 @@ export default function CandidatsPanel() {
                             >
                               Accepter
                             </button>
+
                             <button
                               className="btn btn-ghost btn-sm"
-                              onClick={() => supprimer(c)}
-                              disabled={busyId === c.id}
+                              onClick={() =>
+                                supprimer(c)
+                              }
+                              disabled={
+                                busyId === c.id
+                              }
                             >
-                              <Icon name="trash" size={13} />
+                              <Icon
+                                name="trash"
+                                size={13}
+                              />
                             </button>
                           </div>
                         </td>
